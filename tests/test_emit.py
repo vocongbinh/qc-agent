@@ -245,12 +245,45 @@ def test_api_executor_emits_one_result_per_executed_test(monkeypatch):
     assert ran == ["TC-1", "TC-2"]
     assert bus.kinds == ["test_result", "test_result"]
     assert [e.payload["id"] for e in bus.events] == ["TC-1", "TC-2"]
-    assert [e.payload["type"] for e in bus.events] == ["api", "api"]
+    assert [e.payload["type"] for e in bus.events] == ["api", "integration"]
     assert [e.payload["status"] for e in bus.events] == ["passed", "passed"]
     # CLI vẫn phải cho ra kết quả đầy đủ như trước
     assert out["execution_result"]["total"] == 2
     assert out["execution_result"]["passed"] == 2
     assert [d["id"] for d in out["execution_result"]["details"]] == ["TC-1", "TC-2"]
+
+
+def test_api_executor_emits_integration_type_preserved(monkeypatch):
+    """Integration case chạy qua API executor vẫn phải mang type gốc."""
+    from agents import api_executor, emitter
+
+    monkeypatch.setattr(api_executor, "_run_single_api_test", lambda test, base_url: _canned(test["id"]))
+
+    bus = RecordingBus()
+    emitter.set_bus(bus)
+
+    api_executor.api_executor_node(
+        {"generated_tests": [{"id": "TC-INT", "type": "integration"}]}
+    )
+
+    assert bus.kinds == ["test_result"]
+    payload = bus.only().payload
+    assert payload["id"] == "TC-INT"
+    assert payload["type"] == "integration"
+
+
+def test_api_executor_emits_api_type_when_test_has_no_type(monkeypatch):
+    """Thiếu type = api, đúng như `ttype` mà executor tự tính để route."""
+    from agents import api_executor, emitter
+
+    monkeypatch.setattr(api_executor, "_run_single_api_test", lambda test, base_url: _canned(test["id"]))
+
+    bus = RecordingBus()
+    emitter.set_bus(bus)
+
+    api_executor.api_executor_node({"generated_tests": [{"id": "TC-NO-TYPE"}]})
+
+    assert bus.only().payload["type"] == "api"
 
 
 def test_api_executor_emits_failure_payload(monkeypatch):
