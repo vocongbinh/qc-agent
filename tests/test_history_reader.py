@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+from pathlib import Path
+
+import pytest
 
 from tui.history_reader import RunSummary, load_history, parse_report
 
@@ -211,3 +215,192 @@ def test_load_history_missing_timestamp_sorts_last_and_does_not_raise(tmp_path):
     runs, broken = load_history(d)
     assert broken == 0
     assert [r.request for r in runs] == ["has ts", "no ts"]
+
+
+# --- A1: thứ tự phải deterministic khi timestamp trùng nhau ---
+
+
+def _tie_reports(d, stamp="20260101_000000"):
+    """Ba report cùng timestamp, tên file tăng dần theo 1, 2, 3."""
+    names = [f"report_{stamp}_{i}.json" for i in (1, 2, 3)]
+    for n in names:
+        _write_report(d, n, {"timestamp": stamp, "user_request": n})
+    return names
+
+
+def _glob_in_order(monkeypatch, names, reverse):
+    """Ép glob trả về đúng thứ tự yêu cầu – mô phỏng FS trả order tuỳ ý."""
+    original = Path.glob
+
+    def controlled_glob(self, pattern):
+        hits = [p for p in original(self, pattern) if p.name in names]
+        return iter(sorted(hits, key=lambda p: p.name, reverse=reverse))
+
+    monkeypatch.setattr(Path, "glob", controlled_glob)
+
+
+def test_load_history_ties_broken_by_path_descending(tmp_path, monkeypatch):
+    """Timestamp trùng nhau: sort theo path giảm dần, không theo order glob."""
+    d = tmp_path / "reports"
+    names = _tie_reports(d)
+    _glob_in_order(monkeypatch, names, reverse=False)
+    runs, broken = load_history(d)
+    assert broken == 0
+    assert [Path(r.path).name for r in runs] == sorted(names, reverse=True)
+
+
+def test_load_history_tie_order_identical_across_refreshes(tmp_path, monkeypatch):
+    """Hai lần load với order glob ngược nhau phải cho cùng kết quả."""
+    d = tmp_path / "reports"
+    names = _tie_reports(d)
+    _glob_in_order(monkeypatch, names, reverse=False)
+    first = [Path(r.path).name for r in load_history(d)[0]]
+    _glob_in_order(monkeypatch, names, reverse=True)
+    second = [Path(r.path).name for r in load_history(d)[0]]
+    assert first == second, "thứ tự row lệch nhau giữa hai lần refresh"
+    assert first == sorted(names, reverse=True)
+
+
+def test_load_history_repeated_calls_are_stable(tmp_path):
+    """Không đổi filesystem: gọi lại nhiều lần vẫn cùng thứ tự."""
+    d = tmp_path / "reports"
+    _tie_reports(d)
+    orders = [[Path(r.path).name for r in load_history(d)[0]] for _ in range(5)]
+    assert all(o == orders[0] for o in orders)
+    assert orders[0] == sorted(orders[0], reverse=True)
+
+
+def test_load_history_missing_timestamp_ties_broken_by_path(tmp_path, monkeypatch):
+    """Report không timestamp (timestamp == "") cũng phải sort ổn định."""
+    d = tmp_path / "reports"
+    names = [f"report_untimed_{i}.json" for i in (1, 2, 3)]
+    for n in names:
+        _write_report(d, n, {"user_request": n})
+    _glob_in_order(monkeypatch, names, reverse=False)
+    runs, broken = load_history(d)
+    assert broken == 0
+    assert all(r.timestamp == "" for r in runs)
+    assert [Path(r.path).name for r in runs] == sorted(names, reverse=True)
+
+
+def test_load_history_path_is_a_file_returns_empty(tmp_path):
+    """reports_dir trỏ vào file (không phải dir) thì trả rỗng, không raise."""
+    f = tmp_path / "reports"
+    f.write_text("not a directory", encoding="utf-8")
+    runs, broken = load_history(f)
+    assert runs == []
+    assert broken == 0
+
+
+# --- A2: chỉ giữ entry dict trong details ---
+
+
+def test_parse_report_details_keeps_only_dicts():
+    """Entry không phải dict phải bị loại – widget gọi .get() sẽ crash nếu giữ lại."""
+    payload = {"execution_result": {"details": [
+        {"id": "TC_1", "status": "passed"},
+        1,
+        "TC_2",
+        None,
+        [3],
+        {"id": "TC_4", "status": "failed"},
+    ]}}
+    s = parse_report(payload, "x.json")
+    assert s.details == [{"id": "TC_1", "status": "passed"},
+                         {"id": "TC_4", "status": "failed"}]
+    for d in s.details:
+        assert isinstance(d, dict)
+        assert d.get("status") in ("passed", "failed")
+
+
+def test_parse_report_details_all_non_dicts_becomes_empty():
+    s = parse_report({"execution_result": {"details": [1, 2, 3]}}, "x.json")
+    assert s.details == []
+
+
+def test_parse_report_details_single_non_dict_becomes_empty():
+    s = parse_report({"execution_result": {"details": ["oops"]}}, "x.json")
+    assert s.details == []
+
+
+def test_load_history_details_entries_are_dicts(tmp_path):
+    """Bảo đảm mọi entry đọc từ đĩa đều an toàn cho widget."""
+    d = tmp_path / "reports"
+    _write_report(d, "report_20260105_000000.json", {
+        "timestamp": "20260105_000000",
+        "execution_result": {"details": [{"id": "TC_1", "status": "passed"}, 7]},
+    })
+    runs, broken = load_history(d)
+    assert broken == 0
+    assert [d.get("id") for d in runs[0].details] == ["TC_1"]
+
+
+# --- A3: file không đọc được không phải là file hỏng ---
+
+
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0,
+                    reason="root đọc được file mode 000")
+def test_load_history_unreadable_file_skipped_not_counted_broken(tmp_path):
+    """File không đọc được (quyền) là *không truy cập được*, không phải hỏng."""
+    d = tmp_path / "reports"
+    d.mkdir()
+    locked = d / "report_20260101_000000.json"
+    locked.write_text('{"timestamp": "20260101_000000", "user_request": "locked"}',
+                      encoding="utf-8")
+    _write_report(d, "report_20260102_000000.json", {"user_request": "readable"})
+    locked.chmod(0o000)
+    try:
+        with pytest.raises(PermissionError):
+            locked.read_text(encoding="utf-8")
+        runs, broken = load_history(d)
+    finally:
+        locked.chmod(0o644)
+    assert broken == 0, "file không đọc được không được tính là report hỏng"
+    assert [r.request for r in runs] == ["readable"]
+
+
+def test_load_history_vanished_file_skipped_not_counted_broken(tmp_path, monkeypatch):
+    """File biến mất giữa lúc glob – không phải hỏng, không được đếm vào broken."""
+    d = tmp_path / "reports"
+    _write_report(d, "report_20260101_000000.json", {"user_request": "stays"})
+    _write_report(d, "report_20260102_000000.json", {"user_request": "vanishes"})
+    original = Path.read_text
+
+    def read_text(self, *args, **kwargs):
+        if self.name == "report_20260102_000000.json":
+            raise FileNotFoundError(str(self))
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    runs, broken = load_history(d)
+    assert broken == 0
+    assert [r.request for r in runs] == ["stays"]
+
+
+def test_load_history_json_decode_error_still_counts_as_broken(tmp_path):
+    d = tmp_path / "reports"
+    d.mkdir()
+    (d / "report_20260101_000000.json").write_text("{not json", encoding="utf-8")
+    runs, broken = load_history(d)
+    assert broken == 1
+    assert runs == []
+
+
+def test_load_history_invalid_utf8_counts_as_broken(tmp_path):
+    """Bytes không giải mã được = nội dung hỏng, vẫn phải tính là broken."""
+    d = tmp_path / "reports"
+    d.mkdir()
+    (d / "report_20260101_000000.json").write_bytes(b"\xff\xfe\x00\x01binary")
+    _write_report(d, "report_20260102_000000.json", {"user_request": "ok"})
+    runs, broken = load_history(d)
+    assert broken == 1
+    assert [r.request for r in runs] == ["ok"]
+
+
+def test_load_history_truncated_json_counts_as_broken(tmp_path):
+    d = tmp_path / "reports"
+    d.mkdir()
+    (d / "report_20260101_000000.json").write_text('{"timestamp": "2026', encoding="utf-8")
+    runs, broken = load_history(d)
+    assert broken == 1
+    assert runs == []

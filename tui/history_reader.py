@@ -62,28 +62,36 @@ def parse_report(data: dict[str, Any], path: str) -> RunSummary:
         error=_as_int(ex.get("error")),
         skipped=_as_int(ex.get("skipped")),
         duration_ms=_as_float(ex.get("duration_ms")),
-        details=list(details) if isinstance(details, list) else [],
+        details=[d for d in (details if isinstance(details, list) else [])
+                 if isinstance(d, dict)],
     )
 
 
 def load_history(reports_dir: Union[Path, str]) -> tuple[list[RunSummary], int]:
-    """Trả (runs mới nhất trước, số file JSON hỏng)."""
+    """Trả (runs mới nhất trước, số file JSON hỏng).
+
+    File không đọc được (quyền, biến mất giữa chừng) bị bỏ qua và *không*
+    tính vào `broken`: nó không hỏng, chỉ không truy cập được.
+
+    `reports_dir` không tồn tại / rỗng / là một file đều cho `[]` – `Path.glob`
+    tự kiểm tra `is_dir()` trước khi duyệt, nên không cần guard thủ công.
+    """
     reports_dir = Path(reports_dir)
-    if not reports_dir.is_dir():
-        return [], 0
 
     runs: list[RunSummary] = []
     broken = 0
     for f in reports_dir.glob("report_*.json"):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
-        except Exception:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             broken += 1
+            continue
+        except OSError:
             continue
         if not isinstance(data, dict):
             broken += 1
             continue
         runs.append(parse_report(data, str(f)))
 
-    runs.sort(key=lambda r: r.timestamp, reverse=True)
+    runs.sort(key=lambda r: (r.timestamp, r.path), reverse=True)
     return runs, broken
