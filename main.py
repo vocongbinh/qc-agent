@@ -18,7 +18,9 @@ from agents.graph import qc_graph
 from agents.state import AgentState
 from config.settings import settings
 
-app = typer.Typer(help="QC Agent – AI-powered Quality Control Agent (Phase 1+2)")
+app = typer.Typer(
+    help="QC Agent – AI-powered Quality Control Agent (CLI headless + TUI dashboard)"
+)
 console = Console()
 
 
@@ -130,6 +132,28 @@ def run(
 def version():
     """Hiển thị phiên bản."""
     console.print("QC Agent Phase 1 – LangGraph foundation")
+
+
+@app.command()
+def tui():
+    """Mở giao diện TUI dashboard."""
+    if not settings.openai_api_key:
+        console.print(
+            "[bold red]Thiếu OPENAI_API_KEY.[/bold red]\n"
+            "Tạo file .env ở thư mục gốc và điền:\n"
+            "  OPENAI_API_KEY=sk-..."
+        )
+        raise typer.Exit(1)
+
+    # Import trễ: `main.py run` không được trả giá import Textual, và phải chạy
+    # được cả khi Textual chưa cài.
+    from tui.app import QCTApp
+    from tui.bus import reset_bus
+
+    # Bus là singleton module-level — state của lần chạy trước trong cùng
+    # process sẽ rò sang lần này nếu không reset.
+    reset_bus()
+    QCTApp().run()
 
 
 if __name__ == "__main__":
