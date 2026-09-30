@@ -1617,15 +1617,22 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 Thêm `bus.emit()` vào executor, giữ nguyên `console.print`. Đây là thay đổi duy nhất
 chạm `agents/`. Mọi executor vẫn chạy độc lập khi không có bus (CLI).
 
+> **QUAN TRỌNG — tránh duplicate event:**
+> `JobRunner` (Task 7) **đã emit** `node_end` cho mọi `current_step` và `run_done` khi
+> reporter xong. `agents/emitter.py` **KHÔNG được** emit `node_end` / `node_start` /
+> `run_done` / `run_error` — nếu không TUI sẽ nhận mỗi event 2 lần.
+>
+> `emitter.py` chỉ emit **2 loại**:
+> - `test_result` — từ 4 executor (api, ui, chaos, performance)
+> - `log` — chỉ khi cần báo điều executor không thể tự log (giữ tối thiểu)
+
 **Files:**
 - Create: `agents/emitter.py`
-- Modify: `agents/planner.py:97-159`
-- Modify: `agents/generator.py:119-183`
 - Modify: `agents/api_executor.py:200-266`
 - Modify: `agents/ui_executor.py:413-475`
 - Modify: `agents/chaos_executor.py:475-532`
 - Modify: `agents/performance_executor.py:354-405`
-- Modify: `agents/reporter.py:76-159`
+- **Không sửa**: `agents/planner.py`, `agents/generator.py`, `agents/reporter.py`
 - Test: `tests/test_emit.py`
 
 - [ ] **Step 1: Viết test failing**
@@ -1641,25 +1648,24 @@ from agents import emitter
 def test_emit_without_bus_is_noop():
     emitter.set_bus(None)
     emitter.emit_test_result({"id": "X", "status": "passed"})
-    emitter.emit_node("planner", "planner_done")
-    emitter.emit_run_done("/p.json", "s")
-    emitter.emit_log("info", "hello")
-    emitter.emit_run_error("bad")
 
 
-def test_emit_with_bus_collects_events():
+def test_emit_with_bus_sends_one_event():
     from tui.bus import EventBus
     bus = EventBus()
     emitter.set_bus(bus)
     try:
-        emitter.emit_node("planner", "planner_done")
         emitter.emit_test_result({
             "id": "TC_1", "type": "api", "status": "failed",
             "duration_ms": 12.5, "error_message": "401",
             "title": "Bad login",
         })
-        emitter.emit_log("info", "hello")
-        assert bus.queue.qsize() == 3
+        assert bus.queue.qsize() == 1
+        ev = bus.queue.get_nowait()
+        assert ev.kind == "test_result"
+        assert ev.payload["id"] == "TC_1"
+        assert ev.payload["status"] == "failed"
+        assert ev.payload["error_message"] == "401"
     finally:
         emitter.set_bus(None)
 
@@ -1671,9 +1677,26 @@ def test_emit_test_result_tolerates_sparse_dict():
     try:
         emitter.emit_test_result({"id": "X"})
         assert bus.queue.qsize() == 1
+        assert bus.queue.get_nowait().payload["type"] == "api"
     finally:
         emitter.set_bus(None)
+
+
+def test_set_bus_roundtrip():
+    from tui.bus import EventBus
+    bus = EventBus()
+    emitter.set_bus(bus)
+    try:
+        assert emitter.get_bus() is bus
+    finally:
+        emitter.set_bus(None)
+    assert emitter.get_bus() is None
 ```
+
+> Lưu ý: `EventBus()` tạo ngoài event loop sẽ có `loop=None` và `emit()` là no-op,
+> nên `bus.queue.qsize()` sẽ luôn bằng 0. Test này sẽ **fail**. Hãy dùng
+> `RecordingBus` — một stub thread-safe thu thập event vào list — hoặc chạy test
+> trong event loop thật với `@pytest.mark.asyncio`.
 
 - [ ] **Step 2: Chạy test để xác nhận fail**
 
@@ -1692,6 +1715,9 @@ Create `agents/emitter.py`:
 """Cầu nối emit event từ executor sang TUI.
 
 Bus là tuỳ chọn: CLI không set bus nên mọi hàm ở đây là no-op.
+
+CHỈ emit `test_result`. `node_end` / `run_done` do JobRunner (tui/runner.py) phát
+— emit thêm ở đây sẽ khiến TUI nhận trùng event.
 """
 
 from __future__ import annotations
@@ -1710,20 +1736,6 @@ def get_bus() -> Optional[Any]:
     return _bus
 
 
-def emit_node(node: str, step: str) -> None:
-    if _bus is None:
-        return
-    from tui.bus import Event
-    _bus.emit(Event(kind="node_end", payload={"node": node, "step": step}))
-
-
-def emit_log(level: str, text: str) -> None:
-    if _bus is None:
-        return
-    from tui.bus import Event
-    _bus.emit(Event(kind="log", payload={"level": level, "text": text}))
-
-
 def emit_test_result(result: dict[str, Any]) -> None:
     if _bus is None:
         return
@@ -1739,26 +1751,6 @@ def emit_test_result(result: dict[str, Any]) -> None:
             "error_message": result.get("error_message"),
         },
     ))
-
-
-def emit_run_done(report_path: str, summary: str) -> None:
-    if _bus is None:
-        return
-    from tui.bus import Event
-    _bus.emit(Event(
-        kind="run_done",
-        payload={"report_path": report_path, "summary": summary},
-    ))
-
-
-def emit_run_error(message: str, step: str = "") -> None:
-    if _bus is None:
-        return
-    from tui.bus import Event
-    _bus.emit(Event(
-        kind="run_error",
-        payload={"message": message, "step": step},
-    ))
 ```
 
 - [ ] **Step 4: Chạy test để xác nhận pass**
@@ -1770,57 +1762,11 @@ pytest tests/test_emit.py -v
 
 Expected: 3 passed
 
-- [ ] **Step 5: Emit trong planner.py**
-
-Sửa `agents/planner.py`, thêm import ở đầu file (sau `from config.settings import settings`):
-
-```python
-from agents import emitter
-```
-
-Trong `planner_node`, ngay sau `def planner_node(state: AgentState) -> dict[str, Any]:` thêm `emitter.emit_node("planner", "planner_done")` ở cả 2 nhánh return. Sửa phần return thành công (khoảng dòng 153-159):
-
-```python
-    emitter.emit_node("planner", "planner_done")
-    return {
-        "test_plan": plan_dict,
-        "current_step": "planner_done",
-        "error": None,
-        "messages": [response],
-        "human_approved": False,  # Bắt buộc human review ở Phase 1
-    }
-```
-
-Và nhánh lỗi (khoảng dòng 148-151), thêm emit trước `return`:
-
-```python
-    emitter.emit_node("planner", "planner_failed")
-```
-
-- [ ] **Step 6: Emit trong generator.py**
+- [ ] **Step 5: Emit `test_result` trong api_executor.py**
 
 Thêm `from agents import emitter` sau `from config.settings import settings`.
 
-Trong nhánh thành công của `generator_node` (trước `return` khoảng dòng 178), thêm:
-
-```python
-    emitter.emit_node("generator", "generator_done")
-```
-
-Trong nhánh lỗi JSON (khoảng dòng 170-177), thêm trước `return`:
-
-```python
-    emitter.emit_node("generator", "generator_failed")
-```
-
-Trong 2 nhánh lỗi đầu (thiếu test_plan, chưa approve), thêm `emitter.emit_log("error", "...")`
-tương ứng với message trả về.
-
-- [ ] **Step 7: Emit trong api_executor.py**
-
-Thêm `from agents import emitter` sau `from config.settings import settings`.
-
-Trong vòng lặp for (khoảng dòng 223-224), thêm emit ngay sau khi có `res`:
+Trong vòng lặp for (khoảng dòng 223-224), sửa thành:
 
 ```python
         res = _run_single_api_test(test, base_url=base_url)
@@ -1831,17 +1777,17 @@ Trong vòng lặp for (khoảng dòng 223-224), thêm emit ngay sau khi có `res
 
 Đặt emit **trước** `details.append` để TUI nhận event ngay khi test xong.
 
-- [ ] **Step 8: Emit trong ui_executor.py, chaos_executor.py, performance_executor.py**
+- [ ] **Step 6: Emit trong ui_executor.py, chaos_executor.py, performance_executor.py**
 
-Giống Task 7 — trong mỗi executor, ngay sau dòng `res = _run_single_...(...)`:
+Trong mỗi executor, ngay sau dòng `res = _run_single_...(...)`:
 
 ```python
-        res.setdefault("type", "ui")        # ui_executor
+        res.setdefault("type", "ui")           # ui_executor
         emitter.emit_test_result(res)
 ```
 
 ```python
-        res.setdefault("type", "chaos")     # chaos_executor
+        res.setdefault("type", "chaos")        # chaos_executor
         emitter.emit_test_result(res)
 ```
 
@@ -1852,24 +1798,13 @@ Giống Task 7 — trong mỗi executor, ngay sau dòng `res = _run_single_...(.
 
 Thêm `from agents import emitter` vào cả 3 file.
 
-- [ ] **Step 9: Emit trong reporter.py**
+- [ ] **Step 7: KHÔNG sửa planner.py, generator.py, reporter.py**
 
-Thêm `from agents import emitter` sau `from config.settings import settings`.
+`JobRunner` đã theo dõi `current_step` qua `stream()` và tự emit `node_end` cho mọi
+node, cùng `run_done` khi reporter xong. Thêm emit ở đây sẽ tạo event trùng.
+Ba file này **giữ nguyên**.
 
-Sửa phần return cuối `reporter_node` (khoảng dòng 154-159):
-
-```python
-    emitter.emit_run_done(str(report_json_path), summary)
-
-    return {
-        "report_path": str(report_json_path),
-        "final_summary": summary,
-        "current_step": "reporter_done",
-        "error": None,
-    }
-```
-
-- [ ] **Step 10: Chạy toàn bộ test**
+- [ ] **Step 8: Chạy toàn bộ test**
 
 ```bash
 source .venv/bin/activate
@@ -1878,7 +1813,7 @@ pytest -q
 
 Expected: tất cả pass
 
-- [ ] **Step 11: Xác nhận CLI không hỏng (bus = None → no-op)**
+- [ ] **Step 9: Xác nhận CLI không hỏng (bus = None → no-op)**
 
 ```bash
 source .venv/bin/activate
@@ -1888,14 +1823,13 @@ python main.py run --help
 
 Expected: `graph OK`, và help hiện ra bình thường
 
-- [ ] **Step 12: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
-git add agents/emitter.py agents/planner.py agents/generator.py \
-        agents/api_executor.py agents/ui_executor.py \
+git add agents/emitter.py agents/api_executor.py agents/ui_executor.py \
         agents/chaos_executor.py agents/performance_executor.py \
-        agents/reporter.py tests/test_emit.py
-git commit -m "feat(agents): emit TUI events from executors via optional bus
+        tests/test_emit.py
+git commit -m "feat(agents): emit TUI test_result events from executors
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
