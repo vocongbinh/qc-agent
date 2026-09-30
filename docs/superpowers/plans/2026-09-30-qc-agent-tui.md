@@ -127,7 +127,38 @@ source .venv/bin/activate
 python -c "import textual; print('textual', textual.__version__)"
 ```
 
-Expected in ra version ≥ 0.60
+Expected: in ra version ≥ 0.60
+
+**LƯU Ý QUAN TRỌNG — Textual 8.x API deviations:**
+
+Plan này viết cho Textual 0.60 nhưng `pip install` sẽ lấy bản mới nhất (8.x).
+Đã verify các sai lệch sau, **phải áp dụng khi implement**:
+
+| API trong plan | Textual 8.x | Sửa thành |
+|---|---|---|
+| `from textual.widgets import CheckboxSet` | `CheckboxSet` đã bị **xoá** | Dùng `Checkbox` riêng cho mỗi phase, import từ `textual.widgets._checkbox` |
+| `CheckboxSet(*[(label, key)...], value={...})` | không tồn tại | Nhiều `Checkbox(label, value=bool, id=...)` trong container |
+| `self.query_one("#phases", CheckboxSet)` | không tồn tại | `query("#phase-checkboxes Checkbox")` |
+| `app.get_loop()` | không tồn tại | `self._loop` (Textual tự set trong `run_async`) |
+| `RichLog(highlight=, markup=, wrap=)` | OK, có thêm `max_lines` | giữ nguyên, có thể thêm `max_lines` |
+| `DataTable.add_column(name, key=)` | OK | giữ nguyên |
+| `DataTable.RowSelected.cursor_row` | OK | giữ nguyên |
+| `ListView`, `ListItem`, `Label` | OK | giữ nguyên |
+
+Verify trước khi code:
+
+```bash
+source .venv/bin/activate
+python -c "
+from textual.widgets import RichLog, DataTable, Button, Input, Label, Static, Footer, ListItem, ListView
+from textual.widgets._checkbox import Checkbox
+from textual.screen import ModalScreen
+from textual.containers import Horizontal, Vertical
+print('imports OK')
+"
+```
+
+Expected: `imports OK`
 
 - [ ] **Step 8: Commit**
 

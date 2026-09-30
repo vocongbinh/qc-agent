@@ -23,6 +23,13 @@ tenacity>=8.5.0
 # Phase 2 – UI testing
 playwright>=1.46.0
 
+# TUI
+textual>=0.60.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.24.0
+
 # Later phases
 # allure-pytest>=2.13.0
 # testcontainers>=4.7.0
