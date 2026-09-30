@@ -18,6 +18,7 @@ from typing import Any
 import httpx
 from rich.console import Console
 
+from agents import emitter
 from agents.state import AgentState, ExecutionResult, TestCaseStatus
 from config.settings import settings
 
@@ -374,6 +375,8 @@ def performance_executor_node(state: AgentState) -> dict[str, Any]:
 
     for test in perf_tests:
         res = _run_performance_case(test, base_url=base_url, headed=headed)
+        res.setdefault("type", "performance")
+        emitter.emit_test_result(res)
         details.append(res)
         total_duration += res["duration_ms"]
         title = res.get("title") or res.get("id")

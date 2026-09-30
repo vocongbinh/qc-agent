@@ -11,6 +11,7 @@ from typing import Any
 
 from rich.console import Console
 
+from agents import emitter
 from agents.state import AgentState, ExecutionResult, TestCaseStatus
 from config.settings import settings
 
@@ -438,6 +439,8 @@ def ui_executor_node(state: AgentState) -> dict[str, Any]:
 
     for test in ui_tests:
         res = _run_single_ui_test(test, headed=headed, shared_context=shared)
+        res.setdefault("type", "ui")
+        emitter.emit_test_result(res)
         details.append(res)
         total_duration += res["duration_ms"]
 
