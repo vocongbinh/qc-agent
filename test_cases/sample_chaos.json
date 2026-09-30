@@ -1,0 +1,96 @@
+[
+  {
+    "id": "TC_CHAOS_CONCURRENT_001",
+    "title": "Health chịu 30 concurrent requests",
+    "type": "chaos",
+    "module": "Resilience",
+    "priority": "high",
+    "preconditions": ["Backend đang chạy tại DEFAULT_BASE_URL"],
+    "chaos": {
+      "action": "concurrent",
+      "concurrency": 30,
+      "timeout": 10
+    },
+    "steps": [{"step": 1, "action": "GET /health", "data": {}}],
+    "expected": {
+      "min_success_rate": 0.9,
+      "max_duration_ms": 5000,
+      "p95_duration_ms": 3000
+    },
+    "status": "untested"
+  },
+  {
+    "id": "TC_CHAOS_REDIS_001",
+    "title": "API không trả 500 khi Redis down",
+    "type": "chaos",
+    "module": "Resilience",
+    "priority": "critical",
+    "chaos": {
+      "action": "kill_redis",
+      "restore": true,
+      "wait_after_sec": 2
+    },
+    "steps": [{"step": 1, "action": "GET /api/v1/health", "data": {}}],
+    "expected": {
+      "status_code": [200, 503],
+      "must_not_status": [500]
+    },
+    "status": "untested"
+  },
+  {
+    "id": "TC_CHAOS_KAFKA_DOWN_001",
+    "title": "API không 500 khi Kafka down",
+    "type": "chaos",
+    "module": "Resilience",
+    "priority": "critical",
+    "chaos": {
+      "action": "kill_kafka",
+      "restore": true,
+      "wait_after_sec": 3,
+      "wait_restore_sec": 5
+    },
+    "steps": [{"step": 1, "action": "GET /api/v1/health", "data": {}}],
+    "expected": {
+      "status_code": [200, 503],
+      "must_not_status": [500]
+    },
+    "status": "untested"
+  },
+  {
+    "id": "TC_CHAOS_KAFKA_PROBE_001",
+    "title": "Kafka/Redpanda Pandaproxy health",
+    "type": "chaos",
+    "module": "Resilience",
+    "priority": "medium",
+    "chaos": {
+      "action": "kafka_probe",
+      "kafka_http": "http://localhost:8082"
+    },
+    "steps": [],
+    "expected": {
+      "expect_kafka_up": true
+    },
+    "status": "untested"
+  },
+  {
+    "id": "TC_CHAOS_LATENCY_001",
+    "title": "API OK khi latency 2s qua Toxiproxy",
+    "type": "chaos",
+    "module": "Resilience",
+    "priority": "high",
+    "chaos": {
+      "action": "toxiproxy_latency",
+      "latency_ms": 2000,
+      "jitter_ms": 200,
+      "use_proxy_url": true,
+      "timeout": 15
+    },
+    "steps": [{"step": 1, "action": "GET /health", "data": {}}],
+    "expected": {
+      "status_code": [200, 503],
+      "must_not_status": [500],
+      "max_duration_ms": 15000
+    },
+    "status": "untested"
+  }
+]

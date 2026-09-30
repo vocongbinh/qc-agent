@@ -1,0 +1,29 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Virtualenv
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Agent output artifacts
+reports/
+test_cases/generated_*.json
+test_cases/*.json
+!test_cases/sample_*.json
+
+# UI test artifacts
+ui_artifacts/
+
+# OS
+.DS_Store

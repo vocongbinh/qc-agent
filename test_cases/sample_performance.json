@@ -1,0 +1,39 @@
+[
+  {
+    "id": "TC_PERF_API_001",
+    "title": "Load test GET /health – 10 VUs / 15s",
+    "type": "performance",
+    "module": "Performance",
+    "priority": "high",
+    "performance": {
+      "kind": "api",
+      "vus": 10,
+      "duration_sec": 15,
+      "timeout": 30
+    },
+    "steps": [{"step": 1, "action": "GET /health", "data": {}}],
+    "expected": {
+      "min_success_rate": 0.95,
+      "p95_duration_ms": 1000,
+      "min_rps": 5
+    },
+    "status": "untested"
+  },
+  {
+    "id": "TC_PERF_FE_001",
+    "title": "FE page load + Web Vitals",
+    "type": "performance",
+    "module": "Performance",
+    "priority": "medium",
+    "performance": {
+      "kind": "fe",
+      "url": "http://localhost:3000"
+    },
+    "steps": [],
+    "expected": {
+      "max_page_load_ms": 5000,
+      "max_lcp_ms": 4000
+    },
+    "status": "untested"
+  }
+]
