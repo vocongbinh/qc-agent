@@ -12,6 +12,11 @@ from rich.console import Console
 
 _AGENT_CONSOLE_BUFS: dict[str, io.StringIO] = {}
 
+# Trần bộ nhớ cho buffer capture của mỗi module. Đo theo ký tự chứ không theo
+# dòng: một `console.print` dump JSON dài có thể nhảy nhiều dòng cùng lúc, mà
+# cắt theo dòng sẽ phải parse lại nội dung.
+AGENT_CONSOLE_MAX_CHARS = 100_000
+
 
 @dataclass(frozen=True)
 class Event:
@@ -80,7 +85,12 @@ def reset_bus() -> None:
 def agent_console_buffer(module_name: str) -> io.StringIO:
     if module_name not in _AGENT_CONSOLE_BUFS:
         _AGENT_CONSOLE_BUFS[module_name] = io.StringIO()
-    return _AGENT_CONSOLE_BUFS[module_name]
+    buf = _AGENT_CONSOLE_BUFS[module_name]
+    if len(buf.getvalue()) > AGENT_CONSOLE_MAX_CHARS:
+        # Run dài với executor verbose sẽ phình buffer vô hạn → xoá cho sạch.
+        buf.seek(0)
+        buf.truncate(0)
+    return buf
 
 
 def silence_agent_console() -> None:

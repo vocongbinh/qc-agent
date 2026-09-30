@@ -9,7 +9,15 @@ import types
 import pytest
 from rich.console import Console
 
-from tui.bus import Event, EventBus, get_bus, reset_bus, silence_agent_console
+import tui.bus as bus_module
+from tui.bus import (
+    Event,
+    EventBus,
+    agent_console_buffer,
+    get_bus,
+    reset_bus,
+    silence_agent_console,
+)
 
 
 def test_event_is_frozen():
@@ -47,6 +55,19 @@ async def test_emit_from_thread_is_thread_safe():
     await bus.drain(0.2)
     count = bus.queue.qsize()
     assert count == N, f"expected {N} events, got {count}"
+
+
+@pytest.mark.asyncio
+async def test_emit_defers_to_event_loop_rather_than_putting_synchronously():
+    loop = asyncio.get_running_loop()
+    bus = EventBus(loop=loop)
+    t = threading.Thread(target=lambda: bus.emit(Event(kind="log", payload={})))
+    t.start()
+    t.join()
+    # call_soon_threadsafe chỉ schedule, chưa chạy → queue phải còn rỗng
+    assert bus.queue.qsize() == 0
+    await bus.drain(0.2)
+    assert bus.queue.qsize() == 1
 
 
 @pytest.mark.asyncio
@@ -114,3 +135,37 @@ def test_silence_ignores_non_agent_modules():
         assert mod.console is original
     finally:
         del sys.modules["some_other_pkg"]
+
+
+def test_silence_leaves_non_console_attribute_untouched():
+    mod = types.ModuleType("agents.fake_nonconsole")
+    mod.console = "not a rich Console"
+    sys.modules["agents.fake_nonconsole"] = mod
+    try:
+        silence_agent_console()
+        assert mod.console == "not a rich Console"
+    finally:
+        del sys.modules["agents.fake_nonconsole"]
+
+
+def test_agent_console_buffer_is_capped(monkeypatch):
+    """Buffer capture phải bị chặn trên, không phình vô hạn theo log dài."""
+    cap = 4096
+    monkeypatch.setattr(bus_module, "AGENT_CONSOLE_MAX_CHARS", cap)
+    name = "agents.fake_capped"
+    mod = types.ModuleType(name)
+    mod.console = Console()
+    sys.modules[name] = mod
+    try:
+        silence_agent_console()
+
+        written = 0
+        for _ in range(200):
+            mod.console.print("x" * 100)
+            written += 101
+            assert len(agent_console_buffer(name).getvalue()) <= cap
+
+        assert len(agent_console_buffer(name).getvalue()) < written
+    finally:
+        del sys.modules[name]
+        bus_module._AGENT_CONSOLE_BUFS.pop(name, None)
