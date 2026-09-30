@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, NotRequired
 from typing_extensions import TypedDict
 
 from langgraph.graph.message import add_messages
@@ -132,3 +132,9 @@ class AgentState(TypedDict):
     current_step: str
     error: str | None
     ui_headed: bool  # Phase 2: chạy browser headed
+
+    # TUI (optional — main.py không cần điền)
+    # NotRequired là qualifier thật: LangGraph đọc schema bằng
+    # get_type_hints(..., include_extras=True) nên vẫn coi 2 key này là optional.
+    phases: NotRequired[list[str]]   # các phase được chọn: api/ui/chaos/performance
+    job_id: NotRequired[str]        # uuid4, dùng làm thread_id cho LangGraph
