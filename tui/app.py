@@ -182,6 +182,7 @@ class QCTApp(App):
         graph: Any = None,
         bus: Optional[EventBus] = None,
         review_gate: Optional[ReviewGate] = None,
+        review_gate_factory: Optional[Callable[[], ReviewGate]] = None,
         reports_dir: Optional[Any] = None,
         **kwargs: Any,
     ) -> None:
@@ -196,7 +197,17 @@ class QCTApp(App):
 
         self._graph = graph
         self.bus = bus if bus is not None else EventBus()
-        self.review_gate = review_gate if review_gate is not None else ReviewGate()
+        # `spawn_job` tạo gate MỚI cho mỗi run — xem comment tại đó. Factory là
+        # hook để test thay gate thật bằng double. `review_gate` chỉ dùng cho
+        # lần chạy đầu để giữ tương thích với call site cũ.
+        if review_gate_factory is not None:
+            self._review_gate_factory = review_gate_factory
+        elif review_gate is not None:
+            supplied = review_gate
+            self._review_gate_factory = lambda: supplied
+        else:
+            self._review_gate_factory = ReviewGate
+        self.review_gate = self._review_gate_factory()
 
         # Widget dựng sẵn ở `__init__` để handler state test được ngoài app
         # đang chạy; `compose()` gán lại instance thật khi mount.
@@ -221,6 +232,7 @@ class QCTApp(App):
         self.current_phase = ""
         self.last_report_path = ""
         self.quit_pending = False
+        self._suppress_review_callback = False
         self._dead_worker_polls = 0
 
     # ----- compose -----
@@ -404,6 +416,30 @@ class QCTApp(App):
         self.runner = None
         self._dead_worker_polls = 0
         self.footer.set_running(False)
+        self._dismiss_review_modal()
+
+    def _dismiss_review_modal(self) -> None:
+        """Gỡ modal review nếu nó đang treo trên stack.
+
+        Terminal event có thể tới khi modal còn mở (user bấm Stop, gate timeout,
+        graph lỗi). Không gỡ thì modal full-screen nằm lại che hết dashboard cho
+        một job đã chết, và job sau còn chồng thêm modal nữa.
+        """
+        if self.review_modal is None:
+            return
+        modal = self.review_modal
+        self.review_modal = None
+        # `pop_screen` gọi dismiss callback → `_on_review_dismissed` → resolve
+        # gate. Gate đã release rồi nên resolve lại là no-op, nhưng ta chặn
+        # callback để không sinh log "bị từ chối" giả.
+        self._suppress_review_callback = True
+        try:
+            if modal in self.screen_stack:
+                self.pop_screen()
+        except Exception:
+            pass
+        finally:
+            self._suppress_review_callback = False
 
     def _plan_total(self) -> int:
         # Chưa có `plan_ready` thì plan_count = 0; dùng số case đã nhận làm
@@ -435,6 +471,10 @@ class QCTApp(App):
         self.push_screen(modal, callback=self._on_review_dismissed)
 
     def _on_review_dismissed(self, kept: Optional[list[dict[str, Any]]]) -> None:
+        if self._suppress_review_callback:
+            # Modal bị gỡ tự động vì run đã kết thúc, không phải người dùng
+            # bấm Reject/Approve. Không resolve lại và không log gì.
+            return
         self.review_modal = None
         total = len(self.pending_plan.get("test_cases") or []) if self.pending_plan else 0
         if not kept:
@@ -486,6 +526,11 @@ class QCTApp(App):
         # nếu không thì executor vẫn ghi thẳng ra stdout và phá frame TUI.
         silence_agent_console()
         set_bus(self.bus)
+        # MỖI job một gate riêng: ReviewGate bọc threading.Event nên latch vĩnh
+        # viễn sau lần resolve đầu. Dùng chung gate giữa các run thì run thứ hai
+        # `wait()` trả ngay kết quả của run trước và tự huỷ — dashboard chỉ
+        # chạy được đúng một job rồi treo.
+        self.review_gate = self._review_gate_factory()
         self.runner = JobRunner(graph, self.bus, self.review_gate)
         try:
             self.runner.spawn(self.pending_state)
@@ -548,10 +593,22 @@ class QCTApp(App):
     def _replace_history_items(
         self, pane: HistoryPane, runs: list[Any]
     ) -> None:
-        task, self.history_task = self.history_task, None
-        if task is not None and not task.done():
-            task.cancel()
-        self.history_task = asyncio.create_task(self._set_runs_when_empty(pane, runs))
+        # KHÔNG cancel task đang chạy: nó nằm giữa `await pane.clear()`, mà
+        # `AwaitRemove` await `asyncio.gather(*removal_tasks)` — cancel ở giữa
+        # sẽ huỷ luôn việc prune child, ListItem cũ ở lại và ListItem mới mount
+        # trùng id (`DuplicateIds`), hoặc pane bị đóng băng vĩnh viễn.
+        # Thay vào đó nối task mới vào sau task cũ.
+        previous = self.history_task
+
+        async def run_after() -> None:
+            if previous is not None:
+                try:
+                    await previous
+                except Exception:
+                    pass
+            await self._set_runs_when_empty(pane, runs)
+
+        self.history_task = asyncio.create_task(run_after())
 
     async def _set_runs_when_empty(
         self, pane: HistoryPane, runs: list[Any]

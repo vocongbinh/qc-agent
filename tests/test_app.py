@@ -107,6 +107,39 @@ class FakeGraph:
         self.updates.append(dict(values))
 
 
+class PerThreadFakeGraph:
+    """Giả `qc_graph` nhưng tách state theo `thread_id`, đúng như LangGraph.
+
+    `FakeGraph` đếm `stream_calls` toàn cục nên chỉ dùng được cho một job. Muốn
+    chạy hai job trên cùng một app thì phải mô phỏng việc mỗi `thread_id` có
+    vị trí stream riêng — nếu không, job thứ 2 sẽ đọc tiếp chuỗi của job thứ 1.
+    """
+
+    def __init__(self) -> None:
+        self._pos: dict[str, int] = {}
+        self.updates: list[dict] = []
+        self.threads_used: list[str] = []
+
+    def stream(self, state, config, stream_mode="values"):
+        thread_id = config["configurable"]["thread_id"]
+        if thread_id not in self._pos:
+            self.threads_used.append(thread_id)
+        index = self._pos.setdefault(thread_id, 0)
+        script = happy_script()
+        # Mỗi thread một plan riêng, để assert 2 job là 2 lần chạy độc lập.
+        for state in script[0]:
+            if state.get("test_plan"):
+                state["test_plan"] = {**state["test_plan"], "title": f"Plan {thread_id[:8]}"}
+        # Tăng TRƯỚC khi yield: JobRunner break giữa chừng sẽ `close()` generator
+        # nên code sau vòng lặp yield sẽ không bao giờ chạy.
+        self._pos[thread_id] = index + 1
+        states = script[index] if 0 <= index < len(script) else []
+        return iter([dict(s) for s in states])
+
+    def update_state(self, config, values) -> None:
+        self.updates.append(dict(values))
+
+
 class StubRunner:
     """Đứng thay JobRunner để test state machine không cần thread thật."""
 
@@ -468,8 +501,28 @@ def test_spawn_job_creates_runner_and_sets_agent_bus(runnable: QCTApp, monkeypat
     assert isinstance(runnable.runner, JobRunner)
     assert runnable.runner.graph is graph
     assert runnable.runner.bus is runnable.bus
+    # Gate phải là bản `spawn_job` vừa tạo, không phải gate cũ đã dùng xong.
     assert runnable.runner.review_gate is runnable.review_gate
     runnable.runner.join(5)
+
+
+def test_spawn_job_builds_a_fresh_gate_each_time(runnable: QCTApp, monkeypatch):
+    """`ReviewGate` latch vĩnh viễn — dùng chung gate sẽ chỉ chạy được 1 job."""
+    monkeypatch.setattr(tui_app, "silence_agent_console", lambda: None)
+
+    def run_once():
+        graph = FakeGraph([[{"current_step": "planner_done", "error": "boom"}]])
+        runnable._graph = graph
+        runnable.start_run()
+        runnable.spawn_job()
+        gate = runnable.review_gate
+        runnable.runner.join(5)
+        return gate
+
+    first = run_once()
+    second = run_once()
+    assert first is not second, "phải tạo gate mới cho mỗi job"
+    assert second.is_resolved() is True
 
 
 def test_spawn_job_silences_agents_after_graph_resolution(runnable: QCTApp, monkeypatch):
@@ -882,6 +935,101 @@ async def test_typing_in_the_request_input_never_starts_a_run(tmp_path):
         assert a.query_one("#request", Input).value == "run"
         assert a.running is False
         assert a.runner is None
+
+
+async def test_two_jobs_run_through_one_app(tmp_path):
+    """Regression: gate dùng chung latch vĩnh viễn nên job thứ 2 tự huỷ.
+
+    Nếu `spawn_job` không tạo gate mới, job 2 sẽ `wait()` trả ngay kết quả
+    của job 1 và emit `cancelled(phase="review")` — dashboard chỉ chạy được
+    đúng một job rồi treo.
+    """
+    graph = PerThreadFakeGraph()
+    a = QCTApp(graph=graph, reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        await pilot.pause()
+        seen_titles = []
+        for _ in range(2):
+            a.footer.set_request("test login")
+            a.footer.set_all_phases(True)
+            assert a.start_run() is True
+            a.spawn_job()
+
+            await wait_until(lambda: a.review_modal is not None or not a.running)
+            assert a.review_modal is not None, "modal review không mở"
+            seen_titles.append(a.pending_plan.get("title"))
+            a.review_modal.dismiss(a.review_modal.approve())
+
+            await wait_until(lambda: not a.running)
+            assert a.last_error is None, f"job lỗi: {a.last_error}"
+            # Không modal nào được sót lại che dashboard.
+            assert a.review_modal is None
+            assert len(a.screen_stack) == 1, f"còn {a.screen_stack} trên stack"
+
+    assert len(set(seen_titles)) == 2, f"2 job phải có 2 plan khác nhau: {seen_titles}"
+    assert len(set(graph.threads_used)) == 2, "phải là 2 thread_id khác nhau"
+
+
+async def test_cancelling_during_review_dismisses_the_modal(tmp_path):
+    """Terminal event tới khi modal còn mở phải gỡ modal, không để nó treo."""
+    a = QCTApp(graph=PerThreadFakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        await pilot.pause()
+        a.footer.set_request("test login")
+        a.footer.set_all_phases(True)
+        a.start_run()
+        a.spawn_job()
+
+        await wait_until(lambda: a.review_modal is not None)
+        assert len(a.screen_stack) == 2, "modal phải đang nằm trên stack"
+
+        a.stop_run()
+        await wait_until(lambda: not a.running)
+
+        assert a.review_modal is None, "modal phải được gỡ"
+        assert len(a.screen_stack) == 1, f"modal còn che: {a.screen_stack}"
+
+
+async def test_rapid_history_refreshes_converge_without_duplicate_ids(tmp_path):
+    """Regression: nhiều `refresh_history()` liên tiếp không được hỏng sidebar.
+
+    Task dọn ListItem cũ nằm giữa `await pane.clear()`. Nếu ta `cancel()` task
+    đó giữa chừng, child cũ không bị prune, ListItem mới mount trùng id →
+    `DuplicateIds`; hoặc tệ hơn, pane đóng băng và mọi refresh sau là no-op.
+    """
+    import json
+
+    async def write(n: int) -> None:
+        for i in range(n):
+            (tmp_path / f"report_2026010{i}_000000.json").write_text(
+                json.dumps({"timestamp": f"2026010{i}_000000", "user_request": f"run {i}"}),
+                encoding="utf-8",
+            )
+
+    await write(3)
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        await pilot.pause()
+        for _ in range(6):
+            a.refresh_history()
+            await pilot.pause()
+
+        # Nội dung phải khớp đúng số report trên đĩa.
+        assert len(a.history_pane.runs) == 3
+        assert len(a.history_pane._index_to_run) == 3
+
+        # Thêm report rồi refresh một lần nữa — pane phải cập nhật, không đóng băng.
+        await write(5)
+        a.refresh_history()
+        for _ in range(30):
+            await pilot.pause()
+            if len(a.history_pane.runs) == 5:
+                break
+        assert len(a.history_pane.runs) == 5, "pane đóng băng: refresh sau bị bỏ qua"
+
+        # Không còn task treo.
+        if a.history_task is not None:
+            assert a.history_task.done() or a.history_task.cancelled()
 
 
 async def test_plan_ready_pushes_review_modal_and_dismiss_resolves_gate(tmp_path):
