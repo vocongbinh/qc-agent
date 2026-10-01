@@ -29,6 +29,7 @@ from typing import Any, Optional
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual import on
 from textual.widgets import Button, Input
 
 from agents.emitter import set_bus
@@ -660,3 +661,43 @@ class QCTApp(App):
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if str(event.input.id or "") == "request":
             self.action_start()
+
+    @on(HistoryPane.RunOpened)
+    def _on_history_run_opened(self, event: HistoryPane.RunOpened) -> None:
+        """Nạp kết quả một run trong lịch sử vào bảng + log (spec §4.1)."""
+        run = event.run
+        self.case_table.clear_rows()
+        # Bỏ lọc phase: run đã xong nên muốn thấy đủ mọi test case của nó.
+        self.case_table.set_phase_filter([])
+        for detail in run.details:
+            if isinstance(detail, dict):
+                self.case_table.add_result(detail)
+
+        self.log_pane.clear()
+        header = run.plan_title or "(không có test plan)"
+        self._append_log("info", f"── Lịch sử: {run.request or '(no request)'} ──")
+        self._append_log("info", f"Test plan: {header}")
+        self._append_log(
+            "info",
+            f"{run.total} tests · {run.passed} pass · {run.failed} fail "
+            f"· {run.error} error · {run.skipped} skip "
+            f"· {format_duration(run.duration_ms)}",
+        )
+        for detail in run.details:
+            if not isinstance(detail, dict):
+                continue
+            mark = self.case_table.status_mark(detail.get("status"))
+            line = f"  {mark} {detail.get('id')}"
+            if detail.get("title"):
+                line += f" – {detail['title']}"
+            if detail.get("error_message"):
+                line += f" → {detail['error_message']}"
+            self._append_log("info", line)
+        if run.path:
+            self._append_log("info", f"Report: {run.path}")
+
+        self.received_results = len(run.details)
+        self.footer.set_progress("history", run.passed, run.total)
+        self.footer.set_status(
+            f"Xem lại run {run.short_id} · {run.passed}/{run.total} pass"
+        )

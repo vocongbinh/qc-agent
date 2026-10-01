@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from textual.app import ComposeResult
+from textual.message import Message
 from textual.widgets import Label, ListItem, ListView
 
 from tui.history_reader import RunSummary
@@ -41,6 +42,13 @@ def run_item_id(index: int) -> str:
 
 class HistoryPane(ListView):
     empty_label = EMPTY_LABEL
+
+    class RunOpened(Message):
+        """Người dùng mở một run trong lịch sử."""
+
+        def __init__(self, run: RunSummary) -> None:
+            self.run = run
+            super().__init__()
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -101,4 +109,13 @@ class HistoryPane(ListView):
         self._index = event.list_view.index
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        """Bấm/Enter một mục → báo `QCTApp` nạp run đó.
+
+    `HistoryPane` tự post message thay vì để app đọc thẳng widget state: app có
+    thể subscribe bằng `@on(HistoryPane.RunOpened)` mà không phụ thuộc vào việc
+    widget có giữ index hay không.
+    """
         self._index = event.list_view.index
+        run = self.selected
+        if run is not None:
+            self.post_message(self.RunOpened(run))

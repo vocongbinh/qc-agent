@@ -990,6 +990,51 @@ async def test_cancelling_during_review_dismisses_the_modal(tmp_path):
         assert len(a.screen_stack) == 1, f"modal còn che: {a.screen_stack}"
 
 
+async def test_opening_a_history_run_loads_its_details(tmp_path):
+    """Spec §4.1: bấm một run trong lịch sử phải nạp kết quả vào bảng + log."""
+    import json
+
+    payload = {
+        "timestamp": "20260101_000000",
+        "user_request": "Test auth",
+        "test_plan": {"title": "Auth Plan", "scope": "api"},
+        "execution_result": {
+            "total": 2,
+            "passed": 1,
+            "failed": 1,
+            "error": 0,
+            "skipped": 0,
+            "duration_ms": 1234.0,
+            "details": [
+                {"id": "TC_1", "type": "api", "status": "passed",
+                 "duration_ms": 10, "title": "login ok"},
+                {"id": "TC_2", "type": "ui", "status": "failed",
+                 "duration_ms": 20, "title": "ui login", "error_message": "timeout"},
+            ],
+        },
+    }
+    (tmp_path / "report_20260101_000000.json").write_text(
+        json.dumps(payload), encoding="utf-8"
+    )
+
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        await pilot.pause()
+        assert len(a.history_pane.runs) == 1
+
+        a.history_pane.post_message(
+            HistoryPane.RunOpened(a.history_pane.runs[0])
+        )
+        for _ in range(30):
+            await pilot.pause()
+
+        assert a.case_table.visible_ids() == ["TC_1", "TC_2"]
+        assert "Test auth" in "\n".join(a.log_pane.lines)
+        assert "Auth Plan" in "\n".join(a.log_pane.lines)
+        assert "timeout" in "\n".join(a.log_pane.lines)
+        assert "1/2 pass" in a.footer.status()
+
+
 async def test_rapid_history_refreshes_converge_without_duplicate_ids(tmp_path):
     """Regression: nhiều `refresh_history()` liên tiếp không được hỏng sidebar.
 
