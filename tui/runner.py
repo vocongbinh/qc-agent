@@ -15,7 +15,7 @@ from typing import Any, Iterable, Optional
 
 from tui.bus import Event, EventBus
 from tui.filters import filter_by_phases
-from tui.gate import ReviewGate
+from tui.gate import REVIEW_TIMED_OUT, ReviewGate
 
 # Mọi `current_step` mà agents/*.py ghi ra, trừ sentinel "start" của
 # build_initial_state (không phải node nào). Thêm node mà quên khai báo ở đây
@@ -150,6 +150,16 @@ class JobRunner:
             self._emit("plan_ready", test_plan=plan, count=len(cases))
             kept = self.review_gate.wait()
 
+            if kept is REVIEW_TIMED_OUT:
+                # Spec §4.3: hết giờ duyệt là LỖI, không phải "người dùng huỷ".
+                # Báo `cancelled` ở đây sẽ khiến UI nói "Đã huỷ" y hệt khi
+                # bấm Stop, và người dùng tưởng mình chủ động dừng.
+                self._emit(
+                    "run_error",
+                    message=f"Không có phản hồi review sau {self.review_gate.timeout:.0f}s.",
+                    step="planner_done",
+                )
+                return
             if kept is None:
                 self._emit("cancelled", phase="review")
                 return

@@ -471,13 +471,33 @@ def test_plan_ready_count_is_zero_when_the_plan_has_no_cases():
     assert bus.one("plan_ready") == {"test_plan": {"title": "P"}, "count": 0}
 
 
-def test_gate_timeout_is_treated_as_reject():
-    """Không ai approve trong thời gian chờ → coi như reject, không treo."""
+def test_gate_timeout_emits_run_error_not_cancel():
+    """Spec §4.3: hết giờ duyệt là LỖI, không phải "người dùng bấm huỷ".
+
+    Trả `None` cho cả hai thì UI nói "Đã huỷ" y hệt lúc bấm Stop, người dùng
+    tưởng mình chủ động dừng.
+    """
     runner, graph, bus, gate = _make(gate=ReviewGate(timeout=0.05))
     runner.spawn(build_initial_state("t", phases=["api"]))
     _ends_with(runner, bus)
-    assert bus.one("cancelled")["phase"] == "review"
-    assert "run_done" not in bus.kinds()
+    kinds = bus.kinds()
+    assert "run_error" in kinds, f"timeout phải báo run_error, got {kinds}"
+    assert "cancelled" not in kinds, "timeout không được báo cancelled"
+    assert "run_done" not in kinds
+    msg = bus.one("run_error")["message"]
+    assert "0s" in msg or "review" in msg.lower(), msg
+
+
+def test_gate_reject_still_emits_cancelled():
+    """Reject thật vẫn phải là `cancelled` — timeout sentinel không nuốt mất."""
+    runner, graph, bus, gate = _make(gate=ReviewGate(timeout=5.0))
+    runner.spawn(build_initial_state("t", phases=["api"]))
+    time.sleep(0.2)
+    gate.resolve(None)
+    _ends_with(runner, bus)
+    kinds = bus.kinds()
+    assert "cancelled" in kinds, kinds
+    assert "run_error" not in kinds
 
 
 # --------------------------------------------------------------------------

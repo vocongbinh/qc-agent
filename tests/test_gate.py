@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 
-from tui.gate import ReviewGate
+from tui.gate import REVIEW_TIMED_OUT, ReviewGate
 
 
 def test_wait_blocks_until_resolved():
@@ -48,7 +48,9 @@ def test_timeout_returns_none():
     t.join(timeout=3)
     elapsed = time.perf_counter() - start
     assert not t.is_alive(), "wait() không timeout — treo vĩnh viễn"
-    assert result == [None]
+    # Timeout phải phân biệt được với Reject (`None`) — spec §4.3 yêu cầu báo
+    # `run_error` cho timeout, `cancelled` cho reject.
+    assert result == [REVIEW_TIMED_OUT]
     assert 0.05 < elapsed < 2.0, f"timeout sai: {elapsed}s"
 
 
