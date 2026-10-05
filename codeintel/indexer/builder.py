@@ -7,6 +7,7 @@ from typing import Any
 import kuzu
 
 from codeintel.indexer.ast_parser import ExtractedFunction, parse_go_file
+from codeintel.indexer.ast_parser_ts import parse_ts_file
 from codeintel.indexer.scip_reader import parse_scip_occurrences
 from codeintel.indexer.stitcher import stitch_calls_and_types
 from codeintel.store.ddl import init_schema
@@ -15,7 +16,11 @@ from codeintel.store.db import reset_connection
 logger = logging.getLogger(__name__)
 
 
-def build_index(repo_root: Path | str, db_path: Path | str) -> dict[str, Any]:
+def build_index(
+    repo_root: Path | str,
+    db_path: Path | str,
+    lang: str = "go",
+) -> dict[str, Any]:
     root = Path(repo_root).resolve()
     if not root.exists():
         raise FileNotFoundError(f"Thư mục repo không tồn tại: {root}")
@@ -26,24 +31,39 @@ def build_index(repo_root: Path | str, db_path: Path | str) -> dict[str, Any]:
 
     # 1. Initialize schema in write mode
     init_schema(str(db_p))
-    # 2. Parse Go files with Tree-sitter
+
     all_functions: list[ExtractedFunction] = []
     files_indexed = 0
+    endpoints_indexed = 0
+    lang_lower = lang.lower()
 
-    ignored_parts = {".git", ".venv", "venv", "vendor", "node_modules"}
-    go_files = [
-        gf for gf in sorted(list(root.rglob("*.go")))
-        if not any(part in gf.parts for part in ignored_parts)
-    ]
+    ignored_parts = {".git", ".venv", "venv", "vendor", "node_modules", "dist", "build"}
 
-    for gf in go_files:
-        rel_path = gf.relative_to(root).as_posix()
+    if lang_lower in ("ts", "typescript", "js"):
+        code_files = [
+            f for f in sorted(list(root.rglob("*")))
+            if f.suffix in (".ts", ".tsx", ".js")
+            and not f.name.endswith((".spec.ts", ".test.ts", ".d.ts", ".spec.js", ".test.js"))
+            and not any(part in f.parts for part in ignored_parts)
+        ]
+        parse_fn = parse_ts_file
+        file_lang = "typescript"
+    else:
+        code_files = [
+            f for f in sorted(list(root.rglob("*.go")))
+            if not any(part in f.parts for part in ignored_parts)
+        ]
+        parse_fn = parse_go_file
+        file_lang = "go"
+
+    for cf in code_files:
+        rel_path = cf.relative_to(root).as_posix()
         try:
-            source = gf.read_text(encoding="utf-8", errors="replace")
+            source = cf.read_text(encoding="utf-8", errors="replace")
         except Exception as exc:
-            logger.warning("Failed to read %s: %s", gf, exc)
+            logger.warning("Failed to read %s: %s", cf, exc)
             continue
-        funcs = parse_go_file(rel_path, source)
+        funcs = parse_fn(rel_path, source)
         all_functions.extend(funcs)
         files_indexed += 1
     # 3. Read SCIP index if present
@@ -65,11 +85,11 @@ def build_index(repo_root: Path | str, db_path: Path | str) -> dict[str, Any]:
 
     try:
         # Insert all discovered files
-        for gf in go_files:
-            rel_path = gf.relative_to(root).as_posix()
+        for cf in code_files:
+            rel_path = cf.relative_to(root).as_posix()
             conn.execute(
-                """MERGE (f:File {path: $path}) ON CREATE SET f.language = 'go'""",
-                {"path": rel_path},
+                """MERGE (f:File {path: $path}) ON CREATE SET f.language = $lang""",
+                {"path": rel_path, "lang": file_lang},
             )
 
         # Insert functions
@@ -129,6 +149,46 @@ def build_index(repo_root: Path | str, db_path: Path | str) -> dict[str, Any]:
                     "is_ext": c["is_external"],
                 },
             )
+
+        # 5. Ingest OpenAPI endpoints if available
+        openapi_candidates = [root / "openapi.json", root / "openapi.yaml", root / "swagger.json"]
+        for oac in openapi_candidates:
+            if oac.exists():
+                try:
+                    raw_text = oac.read_text(encoding="utf-8", errors="replace")
+                    spec_data = json.loads(raw_text)
+                    paths = spec_data.get("paths", {})
+                    for path_tpl, methods in paths.items():
+                        if not isinstance(methods, dict):
+                            continue
+                        for method_name, op_details in methods.items():
+                            if method_name.lower() in ("get", "post", "put", "delete", "patch", "options", "head"):
+                                op_id = op_details.get("operationId", "") if isinstance(op_details, dict) else ""
+                                ep_id = f"{method_name.upper()}:{path_tpl}"
+                                conn.execute(
+                                    """MERGE (ep:Endpoint {id: $id})
+                                       ON CREATE SET ep.method = $method,
+                                                     ep.path_template = $path_template,
+                                                     ep.handler_func_id = $op_id""",
+                                    {
+                                        "id": ep_id,
+                                        "method": method_name.upper(),
+                                        "path_template": path_tpl,
+                                        "op_id": op_id or None,
+                                    },
+                                )
+                                endpoints_indexed += 1
+                                if op_id:
+                                    conn.execute(
+                                        """MATCH (ep:Endpoint {id: $ep_id}), (fn:Function)
+                                           WHERE fn.name = $op_id
+                                           MERGE (ep)-[:HANDLES]->(fn)""",
+                                        {"ep_id": ep_id, "op_id": op_id},
+                                    )
+                    logger.info("Indexed %d endpoints from %s", endpoints_indexed, oac.name)
+                    break
+                except Exception as exc:
+                    logger.warning("Failed to parse OpenAPI spec %s: %s", oac, exc)
     finally:
         try:
             conn.close()
@@ -145,6 +205,7 @@ def build_index(repo_root: Path | str, db_path: Path | str) -> dict[str, Any]:
         "files_indexed": files_indexed,
         "functions_indexed": len(all_functions),
         "calls_recorded": len(calls),
+        "endpoints_indexed": endpoints_indexed,
     }
 
     if db_p.is_dir():

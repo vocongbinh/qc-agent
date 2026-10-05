@@ -64,13 +64,19 @@ def inspect_function_branches(
             f.seek(start_byte)
             slice_bytes = f.read(size)
 
-        parser = Parser(GO_LANGUAGE)
+        ext = target_file.suffix.lower()
+        if ext in (".ts", ".tsx", ".js", ".jsx"):
+            import tree_sitter_typescript as tst
+            lang = Language(tst.language_tsx() if ext in (".tsx", ".jsx") else tst.language_typescript())
+        else:
+            lang = GO_LANGUAGE
+        parser = Parser(lang)
         tree = parser.parse(slice_bytes)
 
         branches: list[dict[str, Any]] = []
 
         def traverse(node: Node) -> None:
-            if node.type in ("if_statement", "for_statement", "expression_case"):
+            if node.type in ("if_statement", "for_statement", "for_in_statement", "while_statement", "expression_case", "switch_case"):
                 cond = ""
                 cond_node = node.child_by_field_name("condition")
                 if cond_node:
@@ -80,6 +86,8 @@ def inspect_function_branches(
                         if "condition" in child.type or child.type in ("binary_expression", "for_clause", "expression_list"):
                             cond = slice_bytes[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
                             break
+                if cond.startswith("(") and cond.endswith(")"):
+                    cond = cond[1:-1].strip()
 
                 line_num = int(info["start_line"]) + node.start_point[0]
                 branches.append({

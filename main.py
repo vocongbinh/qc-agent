@@ -223,20 +223,22 @@ def index_cmd(
     db: Optional[str] = typer.Option(None, "--db", "-d", help="Đường dẫn lưu KùzuDB (mặc định theo settings)"),
 ):
     """Xây dựng Code Intelligence Graph vào KùzuDB."""
-    if lang.lower() != "go":
-        console.print(f"[bold red]Lỗi:[/bold red] Ngôn ngữ '{lang}' chưa được hỗ trợ ở Phase 1. Vui lòng chọn '--lang go'.")
+    lang_lower = lang.lower()
+    if lang_lower not in ("go", "ts", "typescript", "js"):
+        console.print(f"[bold red]Lỗi:[/bold red] Ngôn ngữ '{lang}' chưa được hỗ trợ. Vui lòng chọn '--lang go' hoặc '--lang ts'.")
         raise typer.Exit(1)
 
     from codeintel.indexer.builder import build_index
     from config.settings import settings
 
     db_target = Path(db) if db else settings.codeintel_db_path
-    console.print(f"[bold cyan]Đang index repo {root} (ngôn ngữ: {lang}, db: {db_target})...[/bold cyan]")
+    console.print(f"[bold cyan]Đang index repo {root} (ngôn ngữ: {lang_lower}, db: {db_target})...[/bold cyan]")
     try:
-        stats = build_index(root, db_target)
+        stats = build_index(root, db_target, lang=lang_lower)
         if stats["files_indexed"] == 0:
-            console.print(f"[bold yellow]Cảnh báo:[/bold yellow] Không tìm thấy file '.{lang}' nào trong thư mục '{root}'. Kiểm tra lại đường dẫn hoặc extension file.")
-        console.print(f"[bold green]Index thành công![/bold green] Files: {stats['files_indexed']}, Functions: {stats['functions_indexed']}, Calls: {stats['calls_recorded']}")
+            console.print(f"[bold yellow]Cảnh báo:[/bold yellow] Không tìm thấy file mã nguồn nào cho ngôn ngữ '{lang}' trong thư mục '{root}'.")
+        ep_msg = f", Endpoints: {stats['endpoints_indexed']}" if stats.get("endpoints_indexed") else ""
+        console.print(f"[bold green]Index thành công![/bold green] Files: {stats['files_indexed']}, Functions: {stats['functions_indexed']}, Calls: {stats['calls_recorded']}{ep_msg}")
     except Exception as exc:
         console.print(f"[bold red]Lỗi khi index:[/bold red] {exc}")
         raise typer.Exit(1)
