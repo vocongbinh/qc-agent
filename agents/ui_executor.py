@@ -120,12 +120,12 @@ def _vision_heal(page, selector: str, action_hint: str, value: str | None = None
     Khi role/text fail → chụp screenshot → hỏi Vision model selector mới.
     Trả về selector string gợi ý, hoặc None.
     """
-    if not settings.openai_api_key:
-        console.print("    [yellow]Vision heal bỏ qua (thiếu OPENAI_API_KEY)[/yellow]")
+    from agents.llm_factory import get_active_provider, create_chat_llm
+    if get_active_provider() == "none":
+        console.print("    [yellow]Vision heal bỏ qua (thiếu OPENAI_API_KEY hoặc chưa đăng nhập Antigravity)[/yellow]")
         return None
 
     try:
-        from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage
 
         screenshot_bytes = page.screenshot(type="png")
@@ -146,7 +146,7 @@ button:has-text("Đăng nhập")
 input[placeholder="Email"]
 """
 
-        llm = ChatOpenAI(model=settings.vision_model, temperature=0, api_key=settings.openai_api_key)
+        llm = create_chat_llm(role="vision", temperature=0)
         msg = HumanMessage(
             content=[
                 {"type": "text", "text": prompt},

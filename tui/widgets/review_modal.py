@@ -1,8 +1,9 @@
-"""ReviewModalScreen — modal duyệt Test Plan.
+"""ReviewModalScreen — Modal dialog duyệt Test Plan (OpenCode Style).
 
-`ReviewModel` giữ trạng thái tick; modal chỉ lo phần hiển thị. Worker thread
-đang chờ ở `ReviewGate.wait()` nên `dismiss(...)` là đường duy nhất giải
-phóng gate: `None` = reject.
+Thiết kế popup nổi giữa màn hình, viền nổi bật, phím tắt nhanh:
+- ↑↓ di chuyển, space bật/tắt, a chọn tất cả, n bỏ tất cả
+- Enter: Duyệt & Chạy (Approve & Run)
+- Esc: Từ chối (Reject)
 """
 
 from __future__ import annotations
@@ -19,24 +20,97 @@ from tui.review import ReviewModel
 
 COLUMNS = ("On", "ID", "Priority", "Type", "Title")
 
-HINT = "↑↓ chọn · space bật/tắt · a tất cả · n bỏ tất cả · esc từ chối"
+HINT = "↑↓ navigate · space toggle · a all · n none"
 
 
 class ReviewModalScreen(ModalScreen):
+    DEFAULT_CSS = """
+    ReviewModalScreen {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.7);
+    }
+
+    #review-dialog {
+        width: 85%;
+        max-width: 92;
+        height: auto;
+        max-height: 80%;
+        background: $surface;
+        border: round $panel-lighten-2;
+        padding: 1 2;
+    }
+
+    #review-title {
+        text-style: bold;
+        color: $text;
+        margin-bottom: 1;
+    }
+
+    #review-table {
+        height: auto;
+        max-height: 12;
+        margin-bottom: 1;
+    }
+
+    #review-hint {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    #review-buttons {
+        width: 100%;
+        align: right middle;
+        height: 1;
+        margin-top: 1;
+    }
+
+    #review-buttons Button {
+        border: none;
+        background: transparent;
+        height: 1;
+        min-width: 14;
+        padding: 0 1;
+        margin-left: 2;
+    }
+
+    #reject {
+        color: $text-muted;
+        background: transparent !important;
+        border: none;
+    }
+
+    #reject:hover, #reject:focus {
+        color: $text;
+        background: transparent !important;
+        text-style: bold;
+    }
+
+    #approve {
+        color: $accent;
+        background: transparent !important;
+        border: none;
+        text-style: bold;
+    }
+
+    #approve:hover, #approve:focus {
+        color: $primary;
+        background: transparent !important;
+        text-style: bold underline;
+    }
+    """
+
     BINDINGS = [
-        ("space", "toggle", "Bật/tắt"),
-        ("a", "all", "Bật tất cả"),
-        ("n", "none", "Bỏ tất cả"),
-        # Textual 8.x không còn binding escape→dismiss trên Screen, phải khai
-        # báo rõ. `dismiss(None)` là nhánh reject nên gate luôn được giải phóng.
-        ("escape", "dismiss", "Từ chối"),
+        ("space", "toggle", "Toggle"),
+        ("a", "all", "Select all"),
+        ("n", "none", "Deselect all"),
+        ("escape", "dismiss", "Reject"),
+        ("enter", "submit_approve", "Approve & Run"),
     ]
 
     def __init__(self, model: ReviewModel, plan: Optional[dict[str, Any]] = None) -> None:
         super().__init__()
         self.model = model
         self.plan = plan or {}
-        # Chỉ gán trong `on_mount` — trước đó mọi render phải là no-op.
         self._table: Optional[DataTable] = None
 
     # ----- state (test được không cần terminal) -----
@@ -65,14 +139,12 @@ class ReviewModalScreen(ModalScreen):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="review-dialog"):
-            # Tiêu đề/case do LLM sinh: tắt markup để `[` trong text không
-            # ném MarkupError giữa lúc render.
-            yield Label(f"Review: {self.summary_text()}", markup=False)
+            yield Label(f"📋 Review: {self.summary_text()}", id="review-title", markup=False)
             yield DataTable(id="review-table")
-            yield Label(HINT, classes="hint", markup=False)
+            yield Label(HINT, id="review-hint", classes="hint", markup=False)
             with Horizontal(id="review-buttons"):
-                yield Button("✗ Reject", id="reject", variant="error")
-                yield Button("✓ Approve & Run", id="approve", variant="success")
+                yield Button("[Esc] Cancel", id="reject", variant="error")
+                yield Button("[Enter] Approve ↵", id="approve", variant="success")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -80,6 +152,7 @@ class ReviewModalScreen(ModalScreen):
         for name in COLUMNS:
             self._table.add_column(name, key=name)
         self._render_table()
+        self.set_focus(self._table)
 
     # ----- render -----
 
@@ -90,9 +163,9 @@ class ReviewModalScreen(ModalScreen):
         for checked, case_id, priority, case_type, title in self.model.rows():
             self._table.add_row(
                 "✓" if checked else " ",
-                Text(case_id),
-                Text(priority),
-                Text(case_type),
+                Text(case_id, style="bold cyan"),
+                Text(priority, style="yellow" if priority == "high" else ("bold red" if priority == "critical" else "dim")),
+                Text(case_type, style="green"),
                 Text(title),
             )
         self._sync_approve_button()
@@ -117,6 +190,10 @@ class ReviewModalScreen(ModalScreen):
     def action_none(self) -> None:
         self.model.set_all(False)
         self._render_table()
+
+    def action_submit_approve(self) -> None:
+        if self.model.can_approve:
+            self.dismiss(self.approve())
 
     # ----- events -----
 

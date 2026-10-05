@@ -119,7 +119,7 @@ def test_history_pane_empty_state():
     pane = HistoryPane()
     pane.set_runs([])
     assert pane.runs == []
-    assert pane.empty_label == "Chưa có lịch sử"
+    assert pane.empty_label == "No run history"
     assert pane.selected is None
 
 
@@ -232,7 +232,7 @@ async def test_render_empty_state_shows_placeholder():
         pane.set_runs([])
         await _settle(pilot, pane, _items_ready(1))
         assert [str(c.id) for c in pane.children] == ["run-empty"]
-        assert pane.children[0].children[0].content == "Chưa có lịch sử"
+        assert pane.children[0].children[0].content == "No run history"
         assert pane.selected is None
 
 

@@ -6,11 +6,10 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
+from agents.llm_factory import create_chat_llm
 from agents.state import AgentState, TestCase
 from config.settings import settings
-
 
 GENERATOR_SYSTEM = """Bạn là Test Case Generator trong QC Agent.
 Nhiệm vụ: Dựa trên Test Plan đã được human approve, chuẩn hóa và bổ sung chi tiết các test case (api + ui).
@@ -109,12 +108,7 @@ Ví dụ 1 phần tử:
 
 
 def create_generator_llm():
-    return ChatOpenAI(
-        model=settings.generator_model,
-        temperature=settings.temperature,
-        api_key=settings.openai_api_key,
-    )
-
+    return create_chat_llm(role="generator")
 
 def generator_node(state: AgentState) -> dict[str, Any]:
     """Node: chuẩn hóa + bổ sung chi tiết test case từ Test Plan đã approve."""

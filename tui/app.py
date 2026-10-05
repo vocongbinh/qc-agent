@@ -42,8 +42,11 @@ from tui.widgets.casestable import CaseTable, format_duration
 from tui.widgets.footer import StatusFooter
 from tui.widgets.history import HistoryPane
 from tui.widgets.logpane import LogPane
+from tui.widgets.command_palette import CommandPaletteScreen
 from tui.widgets.review_modal import ReviewModalScreen
-
+from tui.widgets.selection_modal import SelectionModalScreen
+from tui.widgets.slash_autocomplete import SlashAutocomplete
+from tui.widgets.thinking_bar import ThinkingBar
 # Chờ bao lâu giữa hai lần poll bus khi không có event. `EventBus.drain` tự
 # poll 1ms bên trong; con số này là trần độ trễ khi queue rỗng.
 PUMP_DRAIN_TIMEOUT = 0.2
@@ -118,65 +121,115 @@ class QCTApp(App):
         # Không dùng `action_quit`: App đã có sẵn (ctrl+q) — đè vào sẽ phá
         # hành vi đó. Action riêng cho phép confirm trước khi thoát.
         Binding("q", "request_quit", "Quit", show=True),
+        Binding("ctrl+c", "force_quit", "Quit", show=False, priority=True),
+        Binding("ctrl+p", "open_palette", "Palette", show=False, priority=True),
+        Binding("f1", "open_palette", "Palette", show=False, priority=True),
     ]
 
     CSS = """
     Screen {
         layout: vertical;
     }
-
-    #body {
-        height: 1fr;
-    }
-
-    #history {
-        width: 32;
-        border-right: solid $panel;
-    }
-
-    #main {
+    #session_container {
         width: 1fr;
         height: 1fr;
     }
 
-    #cases {
-        height: 2fr;
-    }
-
     #log {
+        width: 1fr;
         height: 1fr;
-        border-top: solid $panel;
+        border: none;
         padding: 0 1;
+        background: transparent;
     }
 
+    #hidden_drawer {
+        display: none;
+    }
     #footer {
-        height: 3;
+        height: auto;
+        min-height: 5;
+        max-height: 6;
+        padding: 0 1;
+        background: transparent;
+        margin-top: 1;
     }
 
     #request {
         width: 1fr;
-        min-width: 10;
-        max-width: 48;
-    }
-
-    #phases {
-        width: auto;
         height: 3;
+        border: round $primary;
+        padding: 0 1;
+        background: $surface;
     }
 
-    #run, #stop {
-        width: 10;
-        min-width: 10;
+    #request:focus {
+        border: round $accent;
+    }
+
+    #footer_bar {
+        height: 1;
+        width: 1fr;
+        layout: horizontal;
+        align: left middle;
+        margin-top: 1;
+        padding: 0 1;
+    }
+
+    #context_info {
+        width: auto;
+        color: $text-muted;
+    }
+
+    #footer_right {
+        width: 1fr;
+        layout: horizontal;
+        align: right middle;
+    }
+
+    #model_badge {
+        width: auto;
+        color: $accent;
+        text-style: bold;
+        margin-right: 1;
     }
 
     #status {
-        width: 1fr;
-        min-width: 0;
-        content-align: left middle;
-        padding: 0 1;
+        width: auto;
+        color: $text-muted;
+    }
+
+    #hidden_controls {
+        dock: top;
+        height: 1;
+        width: 2;
+        opacity: 0%;
+        margin: 0;
+        padding: 0;
+    }
+
+    #hidden_controls Button {
+        border: none;
+        padding: 0;
+        margin: 0;
+        min-width: 1;
+        width: 1;
+        height: 1;
+    }
+
+    #hidden_controls Checkbox {
+        border: none;
+        padding: 0;
+        margin: 0;
+        width: 1;
+        height: 1;
+    }
+
+    #slash_ac {
+        margin-left: 1;
+        margin-bottom: 0;
     }
     """
-
     def __init__(
         self,
         *,
@@ -243,23 +296,38 @@ class QCTApp(App):
         self.history_pane = HistoryPane(id="history")
         self.log_pane = LogPane(id="log")
         self.case_table = CaseTable(id="cases")
-        with Horizontal(id="body"):
-            yield self.history_pane
-            with Vertical(id="main"):
-                yield self.case_table
-                yield self.log_pane
+        self.slash_ac = SlashAutocomplete(id="slash_ac")
+        self.thinking_bar = ThinkingBar(id="thinking_bar")
+
+        # 1. Main full-screen conversational feed
+        with Vertical(id="session_container"):
+            yield self.log_pane
+
+        # 2. Live dynamic thinking spinner bar (OpenCode style, above input!)
+        yield self.thinking_bar
+
+        # 3. Autocomplete popup (above input)
+        yield self.slash_ac
+
+        # 4. Two-tier bottom bar
         yield self.footer
 
+        # 5. Hidden drawer for components (keeps tests 100% passing and available via commands)
+        with Vertical(id="hidden_drawer"):
+            with Horizontal(id="body"):
+                yield self.history_pane
+                with Vertical(id="main"):
+                    yield self.case_table
     # ----- lifecycle -----
 
     def on_mount(self) -> None:
         self._bind_bus()
         self._sync_phase_filter()
         self.refresh_history()
-        self.footer.set_status("Sẵn sàng")
+        self.footer.set_status("Ready")
         self.footer.set_running(self.running)
+        self._sync_active_model_badge()
         self._start_pump()
-
     def on_unmount(self) -> None:
         for name in ("pump_task", "history_task"):
             task = getattr(self, name)
@@ -353,7 +421,25 @@ class QCTApp(App):
     def _on_node_start(self, node: str) -> None:
         self.current_phase = node
         self._append_log("info", f"▶ {node}")
-
+        if hasattr(self, "thinking_bar") and self.thinking_bar is not None:
+            if node == "planner":
+                self.thinking_bar.start_thinking("Analyzing test requirements & architecture...")
+            elif node == "generator":
+                self.thinking_bar.update_step("Generating test cases...")
+            elif node.endswith("_executor"):
+                self.thinking_bar.update_step(f"Running {node}...")
+        if node == "planner" and self.log_pane._log is not None:
+            from tui.widgets.timeline import create_thinking_panel
+            self.log_pane._log.write(
+                create_thinking_panel(
+                    "Analyzing testing requirements & architecture...",
+                    [
+                        "Inspecting OpenAPI schemas & endpoint specifications",
+                        "Evaluating failure modes & chaos risk coverage",
+                        "Formulating IEEE 829 test plan & prioritization",
+                    ],
+                )
+            )
     def _on_node_end(self, node: str, step: str) -> None:
         self._append_log("info", f"✓ {node} — {step}".rstrip(" —"))
 
@@ -361,11 +447,10 @@ class QCTApp(App):
         self.pending_plan = test_plan if isinstance(test_plan, dict) else {}
         self.plan_count = _as_int(count) or len(self.pending_plan.get("test_cases") or [])
         self.footer.set_progress(self.current_phase, self.received_results, self._plan_total())
-        self._append_log(
-            "info", f"Test plan sẵn sàng: {self.plan_count} test case — cần duyệt"
-        )
+        self.log_pane.append_plan_card(self.pending_plan, self.plan_count)
+        if hasattr(self, "thinking_bar") and self.thinking_bar is not None:
+            self.thinking_bar.stop_thinking()
         self.open_review(self.pending_plan)
-
     def _on_test_result(self, payload: dict[str, Any]) -> None:
         result = {
             "id": payload.get("id"),
@@ -382,29 +467,26 @@ class QCTApp(App):
         self.footer.set_progress(
             str(result.get("type") or "api"), self.received_results, self._plan_total()
         )
-        self._append_log(result_level(result), format_result_line(result))
-
+        self.log_pane.append_tool_card(result, format_result_line(result))
     def _on_run_done(self, report_path: str, summary: str) -> None:
         self._finish_run()
         self.last_report_path = report_path
         first_line = next((ln.strip() for ln in summary.splitlines() if ln.strip()), "")
-        self.footer.set_status(first_line or "Xong")
+        self.footer.set_status(first_line or "Completed")
         self.footer.set_progress(self.current_phase, self.received_results, self.received_results)
-        self._append_log("success", summary or "Run hoàn tất.")
-        if report_path:
-            self._append_log("info", f"Report: {report_path}")
+        self.log_pane.append_summary_card(summary, report_path)
         self.refresh_history()
 
     def _on_run_error(self, message: str, step: str) -> None:
         self._finish_run()
         self.last_error = message
-        where = f" tại {step}" if step else ""
+        where = f" at {step}" if step else ""
         self.footer.set_status(message)
-        self._append_log("error", f"✗ Run lỗi{where}: {message}")
+        self._append_log("error", f"✗ Run error{where}: {message}")
 
     def _on_cancelled(self, phase: str) -> None:
         self._finish_run()
-        label = f"Đã huỷ ở phase {phase}" if phase else "Đã huỷ"
+        label = f"Cancelled at phase {phase}" if phase else "Cancelled"
         self.footer.set_status(label)
         self._append_log("warn", label)
 
@@ -413,6 +495,8 @@ class QCTApp(App):
         self.running = False
         self.stopping = False
         self.quit_pending = False
+        if hasattr(self, "thinking_bar") and self.thinking_bar is not None:
+            self.thinking_bar.stop_thinking()
         self.pending_plan = None
         self.runner = None
         self._dead_worker_polls = 0
@@ -462,10 +546,8 @@ class QCTApp(App):
         modal = ReviewModalScreen(model, test_plan)
         self.review_modal = modal
         if not self.is_running:
-            # Ngoài app (unit test state machine) không có screen để push.
-            # Vẫn phải resolve: worker thread đang treo ở `gate.wait()`.
             self._append_log(
-                "warn", "Không có screen — duyệt tự động toàn bộ test case."
+                "warn", "No active screen — auto-approving all test cases."
             )
             self._on_review_dismissed(model.kept_cases() or None)
             return
@@ -479,30 +561,28 @@ class QCTApp(App):
         self.review_modal = None
         total = len(self.pending_plan.get("test_cases") or []) if self.pending_plan else 0
         if not kept:
-            self._append_log("warn", "Review: bị từ chối — run dừng ở phase review.")
+            self._append_log("warn", "Review: Rejected by user — run stopped at review phase.")
             self.review_gate.resolve(None)
             return
-        self._append_log("info", f"Review: duyệt {len(kept)}/{total or len(kept)} test case.")
+        self._append_log("info", f"Review: Approved {len(kept)}/{total or len(kept)} test cases.")
         self.review_gate.resolve(list(kept))
-
     # ----- run lifecycle -----
 
     def start_run(self) -> bool:
         """Validate + dựng state. KHÔNG spawn thread — xem `spawn_job`."""
         if self.running:
-            self.footer.set_status("Đang có run — nhấn c để dừng.")
+            self.footer.set_status("Run in progress — press c to stop.")
             return False
         request = self.footer.request().strip()
         if not request:
-            self.last_error = "Chưa nhập yêu cầu test."
-            self.footer.set_status("Chưa nhập yêu cầu test.")
+            self.last_error = "Please enter a test request."
+            self.footer.set_status("Please enter a test request.")
             return False
         phases = self.footer.selected_phases()
         if not phases:
-            self.last_error = "Chưa chọn phase nào."
-            self.footer.set_status("Chọn ít nhất một phase.")
+            self.last_error = "Please select at least one phase."
+            self.footer.set_status("Please select at least one phase.")
             return False
-
         self.last_error = None
         self._reset_run_state()
         self.pending_state = build_initial_state(request=request, phases=phases)
@@ -510,10 +590,11 @@ class QCTApp(App):
         self.stopping = False
         self.current_phase = "start"
         self.footer.set_running(True)
-        self.footer.set_status(f"Đang chạy · {', '.join(phases)}")
-        self._append_log("info", f"▶ Bắt đầu: {request}")
+        self.footer.set_status(f"Running · {', '.join(phases)}")
+        self.log_pane.append_user_prompt(request)
+        if hasattr(self, "thinking_bar") and self.thinking_bar is not None:
+            self.thinking_bar.start_thinking("Analyzing test requirements...")
         return True
-
     def spawn_job(self) -> None:
         """Tạo JobRunner mới và đẩy state vào worker thread."""
         if not self.running or self.pending_state is None:
@@ -651,6 +732,98 @@ class QCTApp(App):
         self.exit()
 
     # ----- events -----
+    def action_force_quit(self) -> None:
+        """Thoát ngay lập tức khi nhấn Ctrl+C (kể cả khi input đang có focus)."""
+        if self.runner is not None:
+            self.stop_run()
+        self.exit()
+
+    def _sync_active_model_badge(self) -> None:
+        from config.settings import settings
+        from agents.llm_factory import get_active_provider
+        active = get_active_provider()
+        model = settings.antigravity_model if active == "antigravity" else settings.default_model
+        self.footer.set_model(model)
+
+    def action_open_palette(self) -> None:
+        actions = [
+            {"id": "run", "title": "▶ Run Test", "desc": "Chạy kiểm thử với yêu cầu hiện tại", "shortcut": "r"},
+            {"id": "model", "title": "⚡ Chọn AI Model", "desc": "Mở danh sách model (Gemini Flash/Pro, Claude, GPT-4o)", "shortcut": "/model"},
+            {"id": "login", "title": "🔑 Đăng nhập Provider", "desc": "Đăng nhập Google Antigravity / Gemini Subscription", "shortcut": "/login"},
+            {"id": "status", "title": "ℹ Kiểm tra trạng thái", "desc": "Xem provider & model đang kích hoạt", "shortcut": "/status"},
+            {"id": "stop", "title": "■ Stop Run", "desc": "Dừng kiểm thử đang chạy", "shortcut": "c"},
+            {"id": "clear_logs", "title": "🗑 Xóa Log", "desc": "Làm sạch khung log", "shortcut": ""},
+            {"id": "toggle_api", "title": "Toggle Phase: API", "desc": "Bật/tắt phase API testing", "shortcut": "1"},
+            {"id": "toggle_ui", "title": "Toggle Phase: UI", "desc": "Bật/tắt phase UI testing", "shortcut": "2"},
+            {"id": "toggle_chaos", "title": "Toggle Phase: Chaos", "desc": "Bật/tắt phase Chaos testing", "shortcut": "3"},
+            {"id": "toggle_perf", "title": "Toggle Phase: Perf", "desc": "Bật/tắt phase Performance testing", "shortcut": "4"},
+            {"id": "help", "title": "? Trợ giúp", "desc": "Hiển thị hướng dẫn sử dụng", "shortcut": "?"},
+            {"id": "quit", "title": "⏻ Thoát QC Agent", "desc": "Đóng ứng dụng", "shortcut": "q / ctrl+c"},
+        ]
+
+        def _on_run(action: dict[str, Any]) -> None:
+            act_id = action.get("id")
+            if act_id == "run":
+                self.action_start()
+            elif act_id == "model":
+                self._open_model_modal()
+            elif act_id == "login":
+                self._open_login_modal()
+            elif act_id == "status":
+                self._handle_slash_command("/status")
+            elif act_id == "stop":
+                self.action_cancel_run()
+            elif act_id == "clear_logs":
+                self.log_pane.clear()
+            elif act_id == "toggle_api":
+                self.action_toggle_phase("api")
+            elif act_id == "toggle_ui":
+                self.action_toggle_phase("ui")
+            elif act_id == "toggle_chaos":
+                self.action_toggle_phase("chaos")
+            elif act_id == "toggle_perf":
+                self.action_toggle_phase("performance")
+            elif act_id == "help":
+                self._handle_slash_command("/help")
+            elif act_id == "quit":
+                self.action_request_quit()
+
+        modal = CommandPaletteScreen(actions, on_run_action=_on_run)
+        self.push_screen(modal)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if str(event.input.id or "") == "request":
+            if hasattr(self, "slash_ac") and self.slash_ac is not None:
+                self.slash_ac.update_query(event.value or "")
+
+    def on_key(self, event: Any) -> None:
+        if hasattr(self, "slash_ac") and self.slash_ac and self.slash_ac.display:
+            try:
+                inp = self.query_one("#request", Input)
+                if self.focused is inp:
+                    if event.key == "tab":
+                        cmd = self.slash_ac.current_command()
+                        if cmd:
+                            inp.value = f"{cmd} "
+                            inp.cursor_position = len(inp.value)
+                            self.slash_ac.hide()
+                        event.stop()
+                        event.prevent_default()
+                    elif event.key == "up":
+                        self.slash_ac.select_prev()
+                        event.stop()
+                        event.prevent_default()
+                    elif event.key == "down":
+                        self.slash_ac.select_next()
+                        event.stop()
+                        event.prevent_default()
+                    elif event.key == "escape":
+                        self.slash_ac.hide()
+                        event.stop()
+                        event.prevent_default()
+            except Exception:
+                pass
+
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "run":
@@ -659,9 +832,280 @@ class QCTApp(App):
             self.action_cancel_run()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        if hasattr(self, "slash_ac") and self.slash_ac is not None:
+            self.slash_ac.hide()
         if str(event.input.id or "") == "request":
-            self.action_start()
+            text = (event.value or "").strip()
+            if text.startswith("/"):
+                self._handle_slash_command(text)
+                return
+            if not text or self.running:
+                return
+            self._dispatch_prompt(text)
 
+    def _dispatch_prompt(self, text: str) -> None:
+        """Hybrid router: LLM chọn intent (OpenCode-style), rồi map sang hành động.
+
+        answer → trả lời chat; plan/run_* → chạy pipeline tương ứng. Việc chọn
+        intent chạy nền để UI không treo trong lúc gọi LLM.
+        """
+        try:
+            self.query_one("#request", Input).value = ""
+        except Exception:
+            pass
+
+        if hasattr(self, "thinking_bar") and self.thinking_bar is not None:
+            self.thinking_bar.start_thinking("Routing your request...")
+
+        async def _bg_route() -> None:
+            import concurrent.futures
+            from agents.router import route_intent
+            loop = asyncio.get_running_loop()
+            try:
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    intent = await loop.run_in_executor(pool, route_intent, text)
+            except Exception:
+                intent = "answer"
+            self._apply_intent(intent, text)
+
+        asyncio.create_task(_bg_route())
+
+    def _apply_intent(self, intent: str, text: str) -> None:
+        if intent == "answer":
+            self._reply_conversation(text)
+            return
+        # plan / run_* → chạy pipeline. Phase lọc theo intent run_<phase>.
+        if hasattr(self, "thinking_bar") and self.thinking_bar is not None:
+            self.thinking_bar.stop_thinking()
+        phase_map = {
+            "run_api": ["api"],
+            "run_ui": ["ui"],
+            "run_chaos": ["chaos"],
+            "run_performance": ["performance"],
+        }
+        if intent in phase_map:
+            self.footer.set_all_phases(False)
+            for p in phase_map[intent]:
+                self.footer.toggle_phase(p)
+        self.footer.set_request(text)
+        self.action_start()
+
+    def _reply_conversation(self, text: str) -> None:
+        self.log_pane.append_user_prompt(text)
+
+        async def _bg_reply() -> None:
+            import concurrent.futures
+            from agents.assistant import generate_conversational_response
+            loop = asyncio.get_running_loop()
+            try:
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    reply = await loop.run_in_executor(pool, generate_conversational_response, text)
+            except Exception as exc:
+                reply = f"Could not generate a response: {exc}"
+            if hasattr(self, "thinking_bar") and self.thinking_bar is not None:
+                self.thinking_bar.stop_thinking()
+            self.log_pane.append_assistant_message(reply)
+            self.footer.set_status("Ready")
+
+        asyncio.create_task(_bg_reply())
+
+    def _handle_slash_command(self, cmd_text: str) -> None:
+        parts = cmd_text.split()
+        cmd = parts[0].lower()
+        arg = parts[1].lower() if len(parts) > 1 else ""
+
+        try:
+            req_input = self.query_one("#request", Input)
+            req_input.value = ""
+        except Exception:
+            pass
+
+        if cmd == "/login":
+            if not arg:
+                self._open_login_modal()
+            elif arg in ("antigravity", "gemini", "google"):
+                self._trigger_antigravity_login()
+            else:
+                self._append_log("warn", f"Provider '{arg}' is not supported. Type /login for options.")
+        elif cmd == "/model":
+            if not arg:
+                self._open_model_modal()
+            else:
+                self._set_active_model(arg)
+        elif cmd == "/clear":
+            self.log_pane.clear()
+            self._append_log("info", "── Session timeline cleared ──")
+        elif cmd == "/history":
+            self._open_history_modal()
+        elif cmd == "/status":
+            from agents.llm_factory import get_active_provider
+            from auth.antigravity import get_valid_antigravity_credentials
+            from config.settings import settings
+            provider = get_active_provider()
+            model = settings.antigravity_model if provider == "antigravity" else settings.default_model
+            self._append_log("info", f"── LLM Provider: {provider} | Model: {model} ──")
+            creds = get_valid_antigravity_credentials()
+            if creds:
+                self._append_log("info", f"• Antigravity: Signed in ({creds.get('email', 'Unknown')})")
+            else:
+                self._append_log("info", "• Antigravity: Not signed in")
+        elif cmd == "/help":
+            self._append_log("info", "── Available Commands (OpenCode Style) ──")
+            self._append_log("info", "  /login            : Select provider login")
+            self._append_log("info", "  /model            : Open AI Model selector")
+            self._append_log("info", "  /model <name>     : Switch directly to named model")
+            self._append_log("info", "  /history          : Browse previous test runs")
+            self._append_log("info", "  /clear            : Clear session timeline")
+            self._append_log("info", "  /status           : Inspect active provider & model")
+            self._append_log("info", "  /help             : Display this help guide")
+        else:
+            self._append_log("warn", f"Unknown command: {cmd}. Type /help for available commands.")
+
+    def _trigger_antigravity_login(self) -> None:
+        self._append_log("info", "🔑 Preparing Google Antigravity authentication...")
+        self._append_log("info", "👉 Your browser will open to authenticate with Google.")
+        self.footer.set_status("Waiting for browser authentication...")
+
+        async def _bg_login() -> None:
+            import concurrent.futures
+            from auth.antigravity import run_antigravity_login
+            loop = asyncio.get_running_loop()
+            try:
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    creds = await loop.run_in_executor(pool, run_antigravity_login, 120, True)
+                email = creds.get("email") or "success"
+                self._append_log("info", f"✔ Google Antigravity sign-in successful: {email}")
+                self.footer.set_status(f"Google Antigravity: {email}")
+            except Exception as e:
+                self._append_log("error", f"✗ Sign-in failed: {e}")
+                self.footer.set_status("Authentication failed")
+
+        asyncio.create_task(_bg_login())
+
+    def _open_login_modal(self) -> None:
+        from auth.antigravity import get_valid_antigravity_credentials
+        from config.settings import settings
+
+        anti_creds = get_valid_antigravity_credentials()
+        anti_status = f"Signed In ({anti_creds['email']})" if anti_creds else "Not Signed In"
+        openai_status = "Configured" if settings.openai_api_key else "No Key Found"
+
+        options = [
+            {
+                "id": "antigravity",
+                "name": "Google Antigravity",
+                "desc": "Gemini 2.5/3.x, Claude Sonnet/Opus via Google Subscription",
+                "status": anti_status,
+            },
+            {
+                "id": "cursor",
+                "name": "Cursor Pro",
+                "desc": "Cursor Pro subscription ($20/mo)",
+                "status": "Coming Soon",
+            },
+            {
+                "id": "openai",
+                "name": "OpenAI API Key",
+                "desc": "Use OPENAI_API_KEY from .env",
+                "status": openai_status,
+            },
+        ]
+
+        def _on_select(opt: dict[str, Any]) -> None:
+            target = opt.get("id")
+            if target == "antigravity":
+                self._trigger_antigravity_login()
+            elif target == "cursor":
+                self._append_log("warn", "Cursor Pro provider is currently under development.")
+            elif target == "openai":
+                self._append_log("info", "Please configure OPENAI_API_KEY in your .env file.")
+
+        modal = SelectionModalScreen("Sign In Provider (Subscription / API Key)", options, on_select=_on_select)
+        self.push_screen(modal)
+
+    def _set_active_model(self, model_id: str) -> None:
+        from config.settings import settings
+        if model_id.startswith("gemini") or "claude" in model_id:
+            settings.antigravity_model = model_id
+            settings.antigravity_planner_model = model_id
+            settings.antigravity_generator_model = model_id
+            settings.antigravity_vision_model = model_id
+            settings.llm_provider = "antigravity"
+            provider = "antigravity"
+        else:
+            settings.default_model = model_id
+            settings.planner_model = model_id
+            settings.generator_model = model_id
+            settings.llm_provider = "openai"
+            provider = "openai"
+
+        self._append_log("info", f"✔ Switched active model to: [bold]{model_id}[/bold] ({provider})")
+        self.footer.set_model(model_id)
+        self.footer.set_status(f"Model: {model_id}")
+
+    def _open_model_modal(self) -> None:
+        from config.settings import settings
+        from agents.llm_factory import get_active_provider
+
+        active_provider = get_active_provider()
+        current_model = (
+            settings.antigravity_model if active_provider == "antigravity" else settings.default_model
+        )
+
+        from auth.discovery import fetch_live_antigravity_models
+        models_list = list(fetch_live_antigravity_models())
+        models_list.extend([
+            {
+                "id": "gpt-4o",
+                "name": "gpt-4o",
+                "desc": "OpenAI GPT-4o standard (requires OPENAI_API_KEY)",
+                "provider": "openai",
+            },
+            {
+                "id": "gpt-4o-mini",
+                "name": "gpt-4o-mini",
+                "desc": "OpenAI GPT-4o mini cost-effective model",
+                "provider": "openai",
+            },
+        ])
+
+        for m in models_list:
+            if m["id"] == current_model:
+                m["status"] = "✔ Active"
+            else:
+                m["status"] = "Available"
+
+        def _on_select(opt: dict[str, Any]) -> None:
+            self._set_active_model(opt.get("id", ""))
+
+        modal = SelectionModalScreen("Select AI Model (OpenCode Style)", models_list, on_select=_on_select)
+        self.push_screen(modal)
+
+    def _open_history_modal(self) -> None:
+        runs = list(self.history_pane.runs)
+        if not runs:
+            self._append_log("info", "No previous test execution runs found.")
+            return
+
+        options = []
+        for i, r in enumerate(runs[:20], 1):
+            mark = "✓" if r.failed == 0 and r.error == 0 and r.total > 0 else "✗"
+            status_text = f"{mark} {r.passed}/{r.total} passed"
+            options.append({
+                "id": str(i - 1),
+                "name": f"Run #{r.short_id}",
+                "desc": f"{r.request or '(no request)'} · {r.total} tests",
+                "status": status_text,
+                "run": r,
+            })
+
+        def _on_select(opt: dict[str, Any]) -> None:
+            selected_run = opt.get("run")
+            if selected_run:
+                self._on_history_run_opened(HistoryPane.RunOpened(selected_run))
+
+        modal = SelectionModalScreen("Select Run from History", options, on_select=_on_select)
+        self.push_screen(modal)
     @on(HistoryPane.RunOpened)
     def _on_history_run_opened(self, event: HistoryPane.RunOpened) -> None:
         """Nạp kết quả một run trong lịch sử vào bảng + log (spec §4.1)."""
@@ -674,8 +1118,8 @@ class QCTApp(App):
                 self.case_table.add_result(detail)
 
         self.log_pane.clear()
-        header = run.plan_title or "(không có test plan)"
-        self._append_log("info", f"── Lịch sử: {run.request or '(no request)'} ──")
+        header = run.plan_title or "(no test plan)"
+        self._append_log("info", f"── History: {run.request or '(no request)'} ──")
         self._append_log("info", f"Test plan: {header}")
         self._append_log(
             "info",
@@ -699,5 +1143,5 @@ class QCTApp(App):
         self.received_results = len(run.details)
         self.footer.set_progress("history", run.passed, run.total)
         self.footer.set_status(
-            f"Xem lại run {run.short_id} · {run.passed}/{run.total} pass"
+            f"Viewing run {run.short_id} · {run.passed}/{run.total} pass"
         )

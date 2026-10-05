@@ -15,7 +15,7 @@ from textual.widgets import Label, ListItem, ListView
 
 from tui.history_reader import RunSummary
 
-EMPTY_LABEL = "Chưa có lịch sử"
+EMPTY_LABEL = "No run history"
 
 # Bề dài request trước khi cắt — vừa sidebar hẹp vừa đủ để nhận ra run.
 _REQUEST_CHARS = 28

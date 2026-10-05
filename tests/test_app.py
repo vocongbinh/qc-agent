@@ -471,7 +471,7 @@ def test_start_run_clears_previous_run_state(runnable: QCTApp):
 
     assert runnable.start_run() is True
     assert runnable.received_results == 0
-    assert runnable.log_pane.lines == ["▶ Bắt đầu: test login"]
+    assert runnable.log_pane.lines == ["▶ Starting: test login"]
     assert runnable.case_table.results == []
     assert runnable.pending_plan is None
     assert runnable.current_phase == "start"
@@ -1223,3 +1223,104 @@ def test_plan_total_falls_back_to_received_when_no_plan_yet(app: QCTApp):
     assert app.footer.progress_text() == "api 1/1"
     app._handle_event(Event(kind="test_result", payload=result("B", "passed", "ui")))
     assert app.footer.progress_text() == "ui 2/2"
+
+async def test_slash_command_help_prints_help(tmp_path):
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        a.action_focus_request()
+        await pilot.pause()
+        inp = a.query_one("#request", Input)
+        inp.value = "/help"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert any("Available Commands" in t for t in a.log_pane.lines)
+        assert inp.value == ""
+
+
+async def test_slash_command_status_prints_status(tmp_path):
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        a.action_focus_request()
+        await pilot.pause()
+        inp = a.query_one("#request", Input)
+        inp.value = "/status"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert any("LLM Provider" in t for t in a.log_pane.lines)
+
+
+async def test_slash_command_login_triggers_login(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+    mock_login = MagicMock(return_value={"email": "tester@gmail.com"})
+    monkeypatch.setattr("auth.antigravity.run_antigravity_login", mock_login)
+
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        a.action_focus_request()
+        await pilot.pause()
+        inp = a.query_one("#request", Input)
+        inp.value = "/login antigravity"
+        await pilot.press("enter")
+        import asyncio
+        await asyncio.sleep(0.05)
+        await pilot.pause()
+        assert any("tester@gmail.com" in t for t in a.log_pane.lines)
+
+async def test_slash_command_login_opens_modal(tmp_path):
+    from tui.widgets.selection_modal import SelectionModalScreen
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        a.action_focus_request()
+        await pilot.pause()
+        inp = a.query_one("#request", Input)
+        inp.value = "/login"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(a.screen, SelectionModalScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def test_slash_command_model_opens_modal(tmp_path):
+    from tui.widgets.selection_modal import SelectionModalScreen
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        a.action_focus_request()
+        await pilot.pause()
+        inp = a.query_one("#request", Input)
+        inp.value = "/model"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(a.screen, SelectionModalScreen)
+        await pilot.press("escape")
+        await pilot.pause()
+
+
+async def test_slash_command_model_direct_switch(tmp_path, monkeypatch):
+    from config.settings import settings
+    old_provider = settings.llm_provider
+    old_model = settings.antigravity_model
+    try:
+        a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+        async with a.run_test() as pilot:
+            a.action_focus_request()
+            await pilot.pause()
+            inp = a.query_one("#request", Input)
+            inp.value = "/model gemini-2.5-flash"
+            await pilot.press("enter")
+            await pilot.pause()
+            assert settings.antigravity_model == "gemini-2.5-flash"
+            assert any("gemini-2.5-flash" in t for t in a.log_pane.lines)
+    finally:
+        settings.llm_provider = old_provider
+        settings.antigravity_model = old_model
+
+
+async def test_ctrl_c_exits_app(tmp_path):
+    a = QCTApp(graph=FakeGraph(), reports_dir=tmp_path)
+    async with a.run_test() as pilot:
+        a.action_focus_request()
+        await pilot.pause()
+        await pilot.press("ctrl+c")
+        await pilot.pause()
+        assert not a.is_running
