@@ -156,5 +156,20 @@ def tui():
     QCTApp().run()
 
 
+
+
+@app.command(name="index")
+def index_cmd(
+    root: str = typer.Option(".", "--root", "-r", help="Thư mục repo cần index"),
+    lang: str = typer.Option("go", "--lang", "-l", help="Ngôn ngữ mục tiêu (hiện tại: go)"),
+):
+    """Xây dựng Code Intelligence Graph vào KùzuDB."""
+    from codeintel.indexer.builder import build_index
+    from config.settings import settings
+    console.print(f"[bold cyan]Đang index repo {root} (ngôn ngữ: {lang})...[/bold cyan]")
+    stats = build_index(root, settings.codeintel_db_path)
+    console.print(f"[bold green]Index thành công![/bold green] Files: {stats['files_indexed']}, Functions: {stats['functions_indexed']}")
+
+
 if __name__ == "__main__":
     app()
