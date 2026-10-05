@@ -1,7 +1,7 @@
 # Multi-DB Sandbox Runner Design (Optimized for QC Agent)
 
 **Date:** 2026-10-05  
-**Status:** Draft for review  
+**Status:** Approved  
 **Target stack (PoC):** `catalog-service` (NestJS + Postgres/Drizzle + Redis)  
 **Related:** Code Intelligence Graph (independent track)
 
