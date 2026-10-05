@@ -234,10 +234,11 @@ def index_cmd(
     console.print(f"[bold cyan]Đang index repo {root} (ngôn ngữ: {lang}, db: {db_target})...[/bold cyan]")
     try:
         stats = build_index(root, db_target)
+        if stats["files_indexed"] == 0:
+            console.print(f"[bold yellow]Cảnh báo:[/bold yellow] Không tìm thấy file '.{lang}' nào trong thư mục '{root}'. Kiểm tra lại đường dẫn hoặc extension file.")
         console.print(f"[bold green]Index thành công![/bold green] Files: {stats['files_indexed']}, Functions: {stats['functions_indexed']}, Calls: {stats['calls_recorded']}")
     except Exception as exc:
         console.print(f"[bold red]Lỗi khi index:[/bold red] {exc}")
         raise typer.Exit(1)
-
 if __name__ == "__main__":
     app()

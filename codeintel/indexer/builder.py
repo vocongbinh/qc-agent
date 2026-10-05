@@ -17,11 +17,15 @@ logger = logging.getLogger(__name__)
 
 def build_index(repo_root: Path | str, db_path: Path | str) -> dict[str, Any]:
     root = Path(repo_root).resolve()
+    if not root.exists():
+        raise FileNotFoundError(f"Thư mục repo không tồn tại: {root}")
+    if not root.is_dir():
+        raise NotADirectoryError(f"Đường dẫn không phải là thư mục: {root}")
+
     db_p = Path(db_path).resolve()
 
     # 1. Initialize schema in write mode
     init_schema(str(db_p))
-
     # 2. Parse Go files with Tree-sitter
     all_functions: list[ExtractedFunction] = []
     files_indexed = 0
