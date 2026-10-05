@@ -45,6 +45,11 @@ def run(
     thread_id: Optional[str] = typer.Option(None, help="Thread ID để resume (nâng cao)"),
     headed: bool = typer.Option(False, "--headed", help="Chạy UI test ở chế độ headed (nhìn thấy browser)"),
     ci: bool = typer.Option(False, "--ci", help="CI mode: bỏ human review (dùng cho pipeline)"),
+    sandbox_mode: Optional[str] = typer.Option(
+        None,
+        "--sandbox-mode",
+        help="Override agent.yaml sandbox_mode: external | db_only | full_local",
+    ),
 ):
     """Chạy QC Agent với yêu cầu của bạn.
     
@@ -76,6 +81,12 @@ def run(
     from sandbox.session import sandbox_session
 
     sandbox_cfg = load_sandbox_config(settings.agent_yaml_path)
+    if sandbox_mode:
+        mode = sandbox_mode.strip().lower()
+        if mode not in {"external", "db_only", "full_local"}:
+            console.print(f"[bold red]Invalid --sandbox-mode: {sandbox_mode}[/bold red]")
+            raise typer.Exit(1)
+        sandbox_cfg.sandbox_mode = mode
     app_root = Path((code or ["."])[0]).resolve()
 
     with sandbox_session(sandbox_cfg, app_root) as (_db_env, seed_manifest):
