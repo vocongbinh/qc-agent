@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     )
 
     # LLM
+    llm_provider: str = "auto"  # "auto", "antigravity", "openai"
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     default_model: str = "gpt-4o"
@@ -17,7 +18,11 @@ class Settings(BaseSettings):
     generator_model: str = "gpt-4o"
     reporter_model: str = "gpt-4o-mini"
     vision_model: str = "gpt-4o"
-
+    antigravity_model: str = "gemini-2.5-flash"
+    antigravity_planner_model: str = "gemini-2.5-flash"
+    antigravity_generator_model: str = "gemini-2.5-flash"
+    antigravity_reporter_model: str = "gemini-2.5-flash"
+    antigravity_vision_model: str = "gemini-2.5-flash"
     # Paths
     project_root: Path = Path(__file__).parent.parent
     test_cases_dir: Path = project_root / "test_cases"
@@ -32,6 +37,10 @@ class Settings(BaseSettings):
     # Code Intelligence
     enable_codeintel: bool = False
     codeintel_db_path: Path = project_root / ".codeintel_db"
+
+    # Sandbox / ID policy
+    sandbox_mode: str = "external"  # external | db_only | full_local
+    agent_yaml_path: Path = project_root / "agent.yaml"
 
     # ----- Stack under test (chỉnh theo môi trường thật) -----
     # App / API

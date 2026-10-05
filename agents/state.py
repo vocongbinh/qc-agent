@@ -123,6 +123,7 @@ class AgentState(TypedDict):
     human_approved: bool
     shared_context: dict  # Hybrid: token/cookie từ API → UI
     code_intelligence_summary: NotRequired[dict[str, Any] | None]
+    seed_manifest: NotRequired[dict[str, Any] | None]
 
     # Output
     execution_result: dict | None
