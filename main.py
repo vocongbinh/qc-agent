@@ -72,70 +72,83 @@ def run(
         if p.exists():
             openapi_content = p.read_text(encoding="utf-8")
 
-    initial_state: AgentState = {
-        "user_request": request,
-        "documents": documents,
-        "code_paths": code or [],
-        "openapi_spec": openapi_content,
-        "messages": [],
-        "test_plan": None,
-        "generated_tests": [],
-        "human_approved": ci,  # False mặc định; True khi --ci
-        "execution_result": None,
-        "report_path": None,
-        "final_summary": None,
-        "current_step": "start",
-        "error": None,
-        "ui_headed": headed,
-        "shared_context": {},
-    }
+    from sandbox.config import load_sandbox_config
+    from sandbox.session import sandbox_session
 
-    config = {
-        "configurable": {
-            "thread_id": thread_id or str(uuid.uuid4()),
+    sandbox_cfg = load_sandbox_config(settings.agent_yaml_path)
+    app_root = Path((code or ["."])[0]).resolve()
+
+    with sandbox_session(sandbox_cfg, app_root) as (_db_env, seed_manifest):
+        initial_state: AgentState = {
+            "user_request": request,
+            "documents": documents,
+            "code_paths": code or [],
+            "openapi_spec": openapi_content,
+            "messages": [],
+            "test_plan": None,
+            "generated_tests": [],
+            "human_approved": ci,  # False mặc định; True khi --ci
+            "execution_result": None,
+            "report_path": None,
+            "final_summary": None,
+            "current_step": "start",
+            "error": None,
+            "ui_headed": headed,
+            "shared_context": {},
+            "seed_manifest": seed_manifest,
         }
-    }
 
-    # Chạy đến human review (nếu có)
-    console.print("[bold]▶ Planner đang phân tích...[/bold]")
-    for event in qc_graph.stream(initial_state, config, stream_mode="values"):
-        step = event.get("current_step", "")
-        if step == "planner_done":
-            plan = event.get("test_plan")
-            if plan:
-                console.print("\n[bold magenta]Test Plan được sinh ra:[/bold magenta]")
-                console.print(Syntax(json.dumps(plan, ensure_ascii=False, indent=2), "json", theme="monokai"))
-            break
-        if event.get("error"):
-            console.print(f"[bold red]Lỗi Planner:[/bold red] {event['error']}")
-            raise typer.Exit(1)
+        config = {
+            "configurable": {
+                "thread_id": thread_id or str(uuid.uuid4()),
+            }
+        }
 
-    # Human review – BẮT BUỘC ở Phase 1
-    if ci:
-        qc_graph.update_state(config, {"human_approved": True})
-        console.print("[green]✓ CI mode – skip human review[/green]\n")
-    else:
-        console.print()
-        approved = Confirm.ask(
-            "[bold yellow]Bạn có approve Test Plan này để tiếp tục generate + execute không?[/bold yellow]",
-            default=True,
-        )
-        if not approved:
-            console.print("[yellow]Đã hủy theo yêu cầu user. Test Plan chưa được thực thi.[/yellow]")
-            raise typer.Exit(0)
-        qc_graph.update_state(config, {"human_approved": True})
-        console.print("[green]✓ Đã approve. Tiếp tục generate + execute...[/green]\n")
+        # Chạy đến human review (nếu có)
+        console.print("[bold]▶ Planner đang phân tích...[/bold]")
+        if seed_manifest and seed_manifest.get("entities"):
+            console.print(
+                f"[dim]seed_manifest: {len(seed_manifest['entities'])} entities "
+                f"({seed_manifest.get('version')})[/dim]"
+            )
+        for event in qc_graph.stream(initial_state, config, stream_mode="values"):
+            step = event.get("current_step", "")
+            if step == "planner_done":
+                plan = event.get("test_plan")
+                if plan:
+                    console.print("\n[bold magenta]Test Plan được sinh ra:[/bold magenta]")
+                    console.print(Syntax(json.dumps(plan, ensure_ascii=False, indent=2), "json", theme="monokai"))
+                break
+            if event.get("error"):
+                console.print(f"[bold red]Lỗi Planner:[/bold red] {event['error']}")
+                raise typer.Exit(1)
 
-    # Tiếp tục chạy phần còn lại
-    for event in qc_graph.stream(None, config, stream_mode="values"):
-        step = event.get("current_step", "")
-        if event.get("error"):
-            console.print(f"[bold red]Lỗi:[/bold red] {event['error']}")
-            raise typer.Exit(1)
-        if step == "reporter_done":
-            break
+        # Human review – BẮT BUỘC ở Phase 1
+        if ci:
+            qc_graph.update_state(config, {"human_approved": True})
+            console.print("[green]✓ CI mode – skip human review[/green]\n")
+        else:
+            console.print()
+            approved = Confirm.ask(
+                "[bold yellow]Bạn có approve Test Plan này để tiếp tục generate + execute không?[/bold yellow]",
+                default=True,
+            )
+            if not approved:
+                console.print("[yellow]Đã hủy theo yêu cầu user. Test Plan chưa được thực thi.[/yellow]")
+                raise typer.Exit(0)
+            qc_graph.update_state(config, {"human_approved": True})
+            console.print("[green]✓ Đã approve. Tiếp tục generate + execute...[/green]\n")
 
-    console.print("\n[bold green]Xong![/bold green]")
+        # Tiếp tục chạy phần còn lại
+        for event in qc_graph.stream(None, config, stream_mode="values"):
+            step = event.get("current_step", "")
+            if event.get("error"):
+                console.print(f"[bold red]Lỗi:[/bold red] {event['error']}")
+                raise typer.Exit(1)
+            if step == "reporter_done":
+                break
+
+        console.print("\n[bold green]Xong![/bold green]")
 
 
 @app.command()

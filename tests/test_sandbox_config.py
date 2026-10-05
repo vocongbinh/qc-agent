@@ -41,3 +41,12 @@ health_path: /health
     assert cfg.sandbox_mode == "external"
     assert cfg.db_type == "postgres"
     assert cfg.manifest_aliases["item.cafe_kem_may"].startswith("a078b105")
+
+
+def test_external_bootstrap_injects_manifest_aliases():
+    from sandbox.bootstrap import load_run_sandbox
+
+    cfg, app_root, env, manifest = load_run_sandbox(["."])
+    assert cfg.sandbox_mode == "external"
+    assert env == {}
+    assert "item.cafe_kem_may" in manifest["entities"]
