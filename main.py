@@ -53,6 +53,16 @@ def run(
     console.print(Panel.fit("[bold green]QC Agent – Phase 1–4 (API + UI + Chaos + Perf)[/bold green]", border_style="green"))
     console.print(f"[cyan]Request:[/cyan] {request}\n")
     console.print("[yellow]Human review Test Plan là bắt buộc. Hỗ trợ API + UI.[/yellow]\n")
+    from agents.llm_factory import get_active_provider
+    if get_active_provider() == "none":
+        console.print(
+            "[bold red]Thiếu OPENAI_API_KEY hoặc chưa đăng nhập subscription.[/bold red]\n"
+            "Tạo file .env ở thư mục gốc và điền:\n"
+            "  OPENAI_API_KEY=sk-...\n"
+            "Hoặc đăng nhập Google Antigravity:\n"
+            "  python main.py login antigravity"
+        )
+        raise typer.Exit(1)
 
     # Chuẩn bị input
     documents = load_documents(docs or [])
@@ -137,11 +147,14 @@ def version():
 @app.command()
 def tui():
     """Mở giao diện TUI dashboard."""
-    if not settings.openai_api_key:
+    from agents.llm_factory import get_active_provider
+    if get_active_provider() == "none":
         console.print(
-            "[bold red]Thiếu OPENAI_API_KEY.[/bold red]\n"
+            "[bold red]Thiếu OPENAI_API_KEY hoặc chưa đăng nhập subscription.[/bold red]\n"
             "Tạo file .env ở thư mục gốc và điền:\n"
-            "  OPENAI_API_KEY=sk-..."
+            "  OPENAI_API_KEY=sk-...\n"
+            "Hoặc đăng nhập Google Antigravity:\n"
+            "  python main.py login antigravity"
         )
         raise typer.Exit(1)
 
@@ -156,20 +169,75 @@ def tui():
     QCTApp().run()
 
 
+@app.command()
+def login(
+    provider: str = typer.Argument("antigravity", help="Provider cần đăng nhập: 'antigravity'"),
+    timeout: int = typer.Option(120, help="Thời gian chờ xác thực trên trình duyệt (giây)"),
+):
+    """Đăng nhập tài khoản subscription (Google Antigravity / Gemini) không cần API key."""
+    if provider.lower() in ("antigravity", "gemini", "google"):
+        from auth.antigravity import run_antigravity_login
+        console.print(Panel.fit("[bold green]Đăng nhập Google Antigravity (Subscription)[/bold green]", border_style="green"))
+        try:
+            creds = run_antigravity_login(timeout=timeout)
+            email = creds.get("email") or "thành công"
+            project_id = creds.get("project_id") or "mặc định"
+            console.print(f"[bold green]✔ Đăng nhập thành công:[/bold green] {email}")
+            console.print(f"[cyan]Project ID:[/cyan] {project_id}")
+            console.print("[dim]Credentials đã được lưu tại ~/.qc-agent/credentials.json[/dim]")
+        except Exception as e:
+            console.print(f"[bold red]Đăng nhập thất bại:[/bold red] {e}")
+            raise typer.Exit(1)
+    else:
+        console.print(f"[bold red]Provider không được hỗ trợ:[/bold red] {provider}. Hiện hỗ trợ: 'antigravity'")
+        raise typer.Exit(1)
 
+
+@app.command()
+def status():
+    """Kiểm tra trạng thái đăng nhập và cấu hình LLM."""
+    from agents.llm_factory import get_active_provider
+    from auth.antigravity import get_valid_antigravity_credentials
+
+    active = get_active_provider()
+    console.print(f"[bold]Provider đang hoạt động:[/bold] [cyan]{active}[/cyan]")
+
+    creds = get_valid_antigravity_credentials()
+    if creds:
+        email = creds.get("email") or "Unknown"
+        project_id = creds.get("project_id") or "Auto"
+        console.print(f"  [green]✔ Google Antigravity:[/green] Đã đăng nhập ({email}) - Project: {project_id}")
+    else:
+        console.print("  [dim]• Google Antigravity: Chưa đăng nhập[/dim]")
+
+    if settings.openai_api_key:
+        masked = settings.openai_api_key[:6] + "..." + settings.openai_api_key[-4:]
+        console.print(f"  [green]✔ OpenAI API Key:[/green] {masked}")
+    else:
+        console.print("  [dim]• OpenAI API Key: Không tìm thấy trong .env[/dim]")
 
 @app.command(name="index")
 def index_cmd(
     root: str = typer.Option(".", "--root", "-r", help="Thư mục repo cần index"),
     lang: str = typer.Option("go", "--lang", "-l", help="Ngôn ngữ mục tiêu (hiện tại: go)"),
+    db: Optional[str] = typer.Option(None, "--db", "-d", help="Đường dẫn lưu KùzuDB (mặc định theo settings)"),
 ):
     """Xây dựng Code Intelligence Graph vào KùzuDB."""
+    if lang.lower() != "go":
+        console.print(f"[bold red]Lỗi:[/bold red] Ngôn ngữ '{lang}' chưa được hỗ trợ ở Phase 1. Vui lòng chọn '--lang go'.")
+        raise typer.Exit(1)
+
     from codeintel.indexer.builder import build_index
     from config.settings import settings
-    console.print(f"[bold cyan]Đang index repo {root} (ngôn ngữ: {lang})...[/bold cyan]")
-    stats = build_index(root, settings.codeintel_db_path)
-    console.print(f"[bold green]Index thành công![/bold green] Files: {stats['files_indexed']}, Functions: {stats['functions_indexed']}")
 
+    db_target = Path(db) if db else settings.codeintel_db_path
+    console.print(f"[bold cyan]Đang index repo {root} (ngôn ngữ: {lang}, db: {db_target})...[/bold cyan]")
+    try:
+        stats = build_index(root, db_target)
+        console.print(f"[bold green]Index thành công![/bold green] Files: {stats['files_indexed']}, Functions: {stats['functions_indexed']}, Calls: {stats['calls_recorded']}")
+    except Exception as exc:
+        console.print(f"[bold red]Lỗi khi index:[/bold red] {exc}")
+        raise typer.Exit(1)
 
 if __name__ == "__main__":
     app()
