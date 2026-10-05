@@ -6,11 +6,10 @@ import json
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
+from agents.llm_factory import create_chat_llm
 from agents.state import AgentState, TestPlan
 from config.settings import settings
-
 
 PLANNER_SYSTEM = """Bạn là Planner Agent chuyên nghiệp trong hệ thống QC Agent.
 Nhiệm vụ: Phân tích yêu cầu của user, tài liệu (PRD, API doc, User Story...) và code để lập **Test Plan** đầy đủ, ưu tiên theo risk.
@@ -87,12 +86,7 @@ Chỉ trả về JSON hợp lệ, không giải thích thêm, không bọc markd
 
 
 def create_planner_llm():
-    return ChatOpenAI(
-        model=settings.planner_model,
-        temperature=settings.temperature,
-        api_key=settings.openai_api_key,
-    )
-
+    return create_chat_llm(role="planner")
 
 def planner_node(state: AgentState) -> dict[str, Any]:
     """Node: tạo Test Plan từ user request + documents + code."""
@@ -100,6 +94,11 @@ def planner_node(state: AgentState) -> dict[str, Any]:
 
     docs_content = "\n\n".join(state.get("documents") or ["(không có tài liệu)"])
     code_info = ", ".join(state.get("code_paths") or ["(không có đường dẫn code)"])
+
+    codeintel_summary = state.get("code_intelligence_summary")
+    codeintel_section = ""
+    if codeintel_summary:
+        codeintel_section = f"\nThông tin Code Intelligence (nhánh & dependencies trích xuất):\n{json.dumps(codeintel_summary, ensure_ascii=False, indent=2)}\n"
 
     user_content = f"""Yêu cầu của user:
 {state["user_request"]}
@@ -112,12 +111,12 @@ Tài liệu:
 
 OpenAPI (nếu có):
 {state.get("openapi_spec") or "(không có)"}
-
+{codeintel_section}
 Lưu ý: Mặc định ưu tiên type="api".
 - type="ui" khi user yêu cầu UI/E2E.
 - type="chaos" khi resilience/redis/kafka/db chết/network.
 - type="performance" khi load test, p95, RPS, lighthouse, web vitals, FE performance.
-Chaos test case cần field "chaos": {"action": "stop_container"|"concurrent"|"network_delay", "target": "redis", "restore": true, "concurrency": 50}.
+Chaos test case cần field "chaos": {{"action": "stop_container"|"concurrent"|"network_delay", "target": "redis", "restore": true, "concurrency": 50}}.
 """
 
     messages = [

@@ -8,6 +8,7 @@ from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
 
 from agents.state import AgentState
+from agents.retriever import codeintel_retriever_node
 from agents.planner import planner_node
 from agents.generator import generator_node
 from agents.api_executor import api_executor_node
@@ -42,6 +43,7 @@ def should_continue_after_generator(state: AgentState) -> Literal["api_executor"
 def build_graph():
     graph = StateGraph(AgentState)
 
+    graph.add_node("codeintel_retriever", codeintel_retriever_node)
     graph.add_node("planner", planner_node)
     graph.add_node("human_review", human_review_node)
     graph.add_node("generator", generator_node)
@@ -51,7 +53,8 @@ def build_graph():
     graph.add_node("performance_executor", performance_executor_node)
     graph.add_node("reporter", reporter_node)
 
-    graph.set_entry_point("planner")
+    graph.set_entry_point("codeintel_retriever")
+    graph.add_edge("codeintel_retriever", "planner")
 
     graph.add_conditional_edges(
         "planner",
