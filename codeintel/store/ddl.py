@@ -54,7 +54,9 @@ DDL_STATEMENTS = [
 ]
 
 def init_schema(db_path: str | Path) -> None:
-    db = kuzu.Database(str(db_path), read_only=False)
+    p = Path(db_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    db = kuzu.Database(str(p), read_only=False)
     conn = kuzu.Connection(db)
     for stmt in DDL_STATEMENTS:
         conn.execute(stmt)

@@ -152,3 +152,13 @@ def test_default_db_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert len(rows) == 1
     assert rows[0]["cnt"] == 0
     reset_connection()
+
+
+def test_readonly_connection_rejects_write(tmp_path: Path) -> None:
+    db_path = tmp_path / "readonly_test_db"
+    init_schema(db_path)
+    reset_connection()
+
+    with pytest.raises(RuntimeError):
+        execute_query(db_path, "CREATE (:File {path: 'evil.go', language: 'go'})")
+    reset_connection()
