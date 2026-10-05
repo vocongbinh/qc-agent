@@ -50,6 +50,18 @@ def sandbox_session(
             apply_sql_seeds(env["DATABASE_URL"], app_project_root, cfg.seed_paths)
         version = hash_seed_files(app_project_root, cfg.seed_paths) if cfg.seed_paths else "session"
         manifest = build_manifest_from_aliases(cfg, version_suffix=version)
-        yield env, manifest
+        if cfg.sandbox_mode == "full_local":
+            from sandbox.app_orchestrator import AppProcess
+
+            with AppProcess(
+                start_cmd=cfg.app_start_cmd,
+                cwd=cfg.app_cwd or str(app_project_root),
+                db_env=env,
+                health_path=cfg.health_path,
+            ) as base_url:
+                env = {**env, "BASE_URL": base_url, "DEFAULT_BASE_URL": base_url}
+                yield env, manifest
+        else:
+            yield env, manifest
     finally:
         provider.stop()
