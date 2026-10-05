@@ -40,6 +40,7 @@ class TestStep(BaseModel):
     action: str
     data: dict[str, Any] = Field(default_factory=dict)
     description: str = ""
+    extract: dict[str, str] = Field(default_factory=dict)
 
 
 class ExpectedResult(BaseModel):
@@ -48,6 +49,7 @@ class ExpectedResult(BaseModel):
     headers: dict[str, Any] = Field(default_factory=dict)
     side_effects: list[str] = Field(default_factory=list)
     response_time_ms_max: int | None = None
+    extract: dict[str, str] = Field(default_factory=dict)
 
 
 class TestCase(BaseModel):
@@ -68,6 +70,7 @@ class TestCase(BaseModel):
     preconditions: list[str] = Field(default_factory=list)
     test_data: dict[str, Any] = Field(default_factory=dict)
     environment: str = "staging"
+    stub_scenario: str | None = None
 
     # 3. Execution & Verification
     steps: list[TestStep] = Field(default_factory=list)
@@ -81,6 +84,7 @@ class TestCase(BaseModel):
     postconditions: list[str] = Field(default_factory=list)
     duration_ms: float | None = None
     artifacts: list[str] = Field(default_factory=list)
+
 
 
 class TestPlan(BaseModel):

@@ -1,0 +1,17 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/api/v1/stock/.*"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "sku": "SKU-TEST-001",
+      "quantity": 10,
+      "in_stock": true
+    }
+  }
+}

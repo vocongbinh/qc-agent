@@ -129,6 +129,7 @@ class QCTApp(App):
     CSS = """
     Screen {
         layout: vertical;
+        background: transparent;
     }
     #session_container {
         width: 1fr;
@@ -160,11 +161,12 @@ class QCTApp(App):
         height: 3;
         border: round $primary;
         padding: 0 1;
-        background: $surface;
+        background: transparent;
     }
 
     #request:focus {
         border: round $accent;
+        background: transparent;
     }
 
     #footer_bar {
@@ -748,6 +750,9 @@ class QCTApp(App):
     def action_open_palette(self) -> None:
         actions = [
             {"id": "run", "title": "▶ Run Test", "desc": "Chạy kiểm thử với yêu cầu hiện tại", "shortcut": "r"},
+            {"id": "mode_test", "title": "🎯 Chế độ: TEST", "desc": "Lập & chạy kiểm thử tự động", "shortcut": "/test"},
+            {"id": "mode_debug", "title": "🔍 Chế độ: DEBUG", "desc": "Điều tra lỗi & phân tích root cause", "shortcut": "/debug"},
+            {"id": "mode_fix", "title": "🛠️ Chế độ: FIX", "desc": "Tự động patch code sửa bug (Search/Replace)", "shortcut": "/fix"},
             {"id": "model", "title": "⚡ Chọn AI Model", "desc": "Mở danh sách model (Gemini Flash/Pro, Claude, GPT-4o)", "shortcut": "/model"},
             {"id": "login", "title": "🔑 Đăng nhập Provider", "desc": "Đăng nhập Google Antigravity / Gemini Subscription", "shortcut": "/login"},
             {"id": "status", "title": "ℹ Kiểm tra trạng thái", "desc": "Xem provider & model đang kích hoạt", "shortcut": "/status"},
@@ -765,6 +770,12 @@ class QCTApp(App):
             act_id = action.get("id")
             if act_id == "run":
                 self.action_start()
+            elif act_id == "mode_test":
+                self._handle_slash_command("/test")
+            elif act_id == "mode_debug":
+                self._handle_slash_command("/debug")
+            elif act_id == "mode_fix":
+                self._handle_slash_command("/fix")
             elif act_id == "model":
                 self._open_model_modal()
             elif act_id == "login":
@@ -920,7 +931,16 @@ class QCTApp(App):
         except Exception:
             pass
 
-        if cmd == "/login":
+        if cmd == "/test":
+            self.footer.set_mode("test")
+            self._append_log("info", "🎯 Switched to **TEST** mode (Plan & run API/UI/Chaos/Perf tests)")
+        elif cmd == "/debug":
+            self.footer.set_mode("debug")
+            self._append_log("info", "🔍 Switched to **DEBUG** mode (Root Cause Analysis & bug reproduction)")
+        elif cmd == "/fix":
+            self.footer.set_mode("fix")
+            self._append_log("info", "🛠️ Switched to **FIX** mode (Autonomous Search/Replace code patching)")
+        elif cmd == "/login":
             if not arg:
                 self._open_login_modal()
             elif arg in ("antigravity", "gemini", "google"):
@@ -943,7 +963,8 @@ class QCTApp(App):
             from config.settings import settings
             provider = get_active_provider()
             model = settings.antigravity_model if provider == "antigravity" else settings.default_model
-            self._append_log("info", f"── LLM Provider: {provider} | Model: {model} ──")
+            mode = getattr(self.footer, "get_mode", lambda: "test")()
+            self._append_log("info", f"── LLM Provider: {provider} | Model: {model} | Mode: {mode.upper()} ──")
             creds = get_valid_antigravity_credentials()
             if creds:
                 self._append_log("info", f"• Antigravity: Signed in ({creds.get('email', 'Unknown')})")
@@ -951,12 +972,15 @@ class QCTApp(App):
                 self._append_log("info", "• Antigravity: Not signed in")
         elif cmd == "/help":
             self._append_log("info", "── Available Commands (OpenCode Style) ──")
+            self._append_log("info", "  /test             : Switch to Test mode (Plan & Run Tests)")
+            self._append_log("info", "  /debug            : Switch to Debug mode (RCA & Bug Reproduction)")
+            self._append_log("info", "  /fix              : Switch to Fix mode (Aider Search/Replace Patching)")
             self._append_log("info", "  /login            : Select provider login")
             self._append_log("info", "  /model            : Open AI Model selector")
             self._append_log("info", "  /model <name>     : Switch directly to named model")
             self._append_log("info", "  /history          : Browse previous test runs")
             self._append_log("info", "  /clear            : Clear session timeline")
-            self._append_log("info", "  /status           : Inspect active provider & model")
+            self._append_log("info", "  /status           : Inspect active mode, provider & model")
             self._append_log("info", "  /help             : Display this help guide")
         else:
             self._append_log("warn", f"Unknown command: {cmd}. Type /help for available commands.")

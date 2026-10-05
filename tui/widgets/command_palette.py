@@ -31,19 +31,49 @@ class CommandPaletteScreen(ModalScreen):
         max-width: 85;
         height: auto;
         max-height: 24;
-        background: $surface;
-        border: thick $primary;
+        background: $background;
+        border: round #3f3f46;
         padding: 1 2;
     }
 
     #palette_input {
         margin-bottom: 1;
-        border: tall $primary;
+        border: round #3f3f46;
+        background: transparent;
+    }
+
+    #palette_input:focus {
+        border: round $primary;
     }
 
     #palette_table {
         height: auto;
         max-height: 14;
+        background: transparent;
+    }
+
+    #palette_table > .datatable--even-row {
+        background: transparent;
+    }
+
+    #palette_table > .datatable--odd-row {
+        background: transparent;
+    }
+
+    #palette_table > .datatable--cursor {
+        background: transparent;
+        color: white;
+        text-style: bold;
+    }
+
+    #palette_table:focus > .datatable--cursor {
+        background: transparent;
+        color: white;
+        text-style: bold;
+    }
+
+    #palette_table .datatable--hover {
+        background: transparent;
     }
 
     #palette_hint {
@@ -93,9 +123,9 @@ class CommandPaletteScreen(ModalScreen):
             desc = act.get("desc", "")
             keybind = act.get("shortcut", "")
             self._table.add_row(
-                Text(title, style="bold cyan"),
-                Text(desc, style="italic"),
-                Text(keybind, style="dim green"),
+                Text(title, style="bold"),
+                Text(desc, style="dim"),
+                Text(keybind, style="dim"),
                 key=str(i),
             )
         if self.filtered_actions:

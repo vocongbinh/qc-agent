@@ -136,6 +136,15 @@ def _run_single_api_test(test: dict, base_url: str, seed_manifest: dict | None =
         "extracted": {},  # Hybrid: biến lấy từ response (token, ...)
     }
 
+    stub_scenario = test.get("stub_scenario")
+    from sandbox.session import get_active_stub_provider
+    stub_provider = get_active_stub_provider()
+    if stub_scenario and stub_provider:
+        try:
+            stub_provider.load_scenario(stub_scenario)
+        except Exception:
+            pass
+
     try:
         steps = test.get("steps") or []
         if not steps:
@@ -174,8 +183,9 @@ def _run_single_api_test(test: dict, base_url: str, seed_manifest: dict | None =
                     last_body = resp.text[:1000]
 
                 # Extract biến từ response để dùng step sau + hybrid UI
-                if extract_map and isinstance(last_body, dict):
-                    extracted = _extract_from_body(last_body, extract_map)
+                step_extract = step.get("extract") or (step.get("expected") or {}).get("extract") or extract_map
+                if step_extract and isinstance(last_body, dict):
+                    extracted = _extract_from_body(last_body, step_extract)
                     context.update(extracted)
                     result["extracted"].update(extracted)
 
@@ -211,6 +221,12 @@ def _run_single_api_test(test: dict, base_url: str, seed_manifest: dict | None =
         result["status"] = TestCaseStatus.ERROR.value
         result["error_message"] = str(e)
         result["actual_result"] = str(e)
+    finally:
+        if stub_scenario and stub_provider:
+            try:
+                stub_provider.reset()
+            except Exception:
+                pass
 
     result["duration_ms"] = round((time.perf_counter() - start) * 1000, 2)
     return result

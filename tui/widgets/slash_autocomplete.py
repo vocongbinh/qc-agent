@@ -17,6 +17,18 @@ from textual.widgets import DataTable, Static
 
 SLASH_COMMANDS = [
     {
+        "cmd": "/test",
+        "desc": "Switch to Test mode (Plan & run API/UI/Chaos/Perf tests)",
+    },
+    {
+        "cmd": "/debug",
+        "desc": "Switch to Debug mode (Root Cause Analysis & bug reproduction)",
+    },
+    {
+        "cmd": "/fix",
+        "desc": "Switch to Fix mode (Autonomous Search/Replace code patching)",
+    },
+    {
         "cmd": "/model",
         "desc": "Select AI model (Gemini 2.5 Flash/Pro, Claude, GPT-4o)",
     },
@@ -34,7 +46,7 @@ SLASH_COMMANDS = [
     },
     {
         "cmd": "/status",
-        "desc": "Inspect active LLM provider & model",
+        "desc": "Inspect active mode, LLM provider & model",
     },
     {
         "cmd": "/help",
@@ -48,11 +60,11 @@ class SlashAutocomplete(Static):
 
     DEFAULT_CSS = """
     SlashAutocomplete {
-        width: 65;
+        width: 72;
         height: auto;
         max-height: 8;
-        background: $surface;
-        border: round $primary;
+        background: transparent;
+        border: round #3f3f46;
         padding: 0 1;
         display: none;
     }
@@ -60,6 +72,32 @@ class SlashAutocomplete(Static):
     #ac_table {
         height: auto;
         max-height: 7;
+        background: transparent;
+        border: none;
+    }
+
+    #ac_table > .datatable--even-row {
+        background: transparent;
+    }
+
+    #ac_table > .datatable--odd-row {
+        background: transparent;
+    }
+
+    #ac_table > .datatable--cursor {
+        background: transparent;
+        color: white;
+        text-style: bold;
+    }
+
+    #ac_table:focus > .datatable--cursor {
+        background: transparent;
+        color: white;
+        text-style: bold;
+    }
+
+    #ac_table .datatable--hover {
+        background: transparent;
     }
     """
 
@@ -70,7 +108,7 @@ class SlashAutocomplete(Static):
         self._table: Optional[DataTable] = None
 
     def compose(self) -> ComposeResult:
-        table = DataTable(id="ac_table", cursor_type="row", show_header=False)
+        table = DataTable(id="ac_table", cursor_type="none", show_header=False)
         yield table
 
     def on_mount(self) -> None:
@@ -83,11 +121,15 @@ class SlashAutocomplete(Static):
             return
         self._table.clear()
         for i, item in enumerate(self.filtered):
-            self._table.add_row(
-                Text(item["cmd"], style="bold cyan"),
-                Text(item["desc"], style="italic dim"),
-                key=str(i),
-            )
+            is_selected = (i == self._selected_index)
+            if is_selected:
+                cmd_text = Text(f"❯ {item['cmd']}", style="bold white")
+                desc_text = Text(item["desc"], style="bold")
+            else:
+                cmd_text = Text(f"  {item['cmd']}", style="dim")
+                desc_text = Text(item["desc"], style="dim")
+            self._table.add_row(cmd_text, desc_text, key=str(i))
+
         if self.filtered:
             self._selected_index = min(self._selected_index, len(self.filtered) - 1)
             self._table.move_cursor(row=self._selected_index)
@@ -120,11 +162,13 @@ class SlashAutocomplete(Static):
         if self.filtered and self._table:
             self._selected_index = (self._selected_index + 1) % len(self.filtered)
             self._table.move_cursor(row=self._selected_index)
+            self._refresh_table()
 
     def select_prev(self) -> None:
         if self.filtered and self._table:
             self._selected_index = (self._selected_index - 1) % len(self.filtered)
             self._table.move_cursor(row=self._selected_index)
+            self._refresh_table()
 
     def current_command(self) -> str | None:
         if 0 <= self._selected_index < len(self.filtered):

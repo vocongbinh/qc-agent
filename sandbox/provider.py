@@ -15,10 +15,25 @@ class SandboxProvider(Protocol):
     def stop(self) -> None: ...
 
 
+class NoopSandboxProvider:
+    supports_fast_reset = True
+
+    def start(self) -> dict[str, str]:
+        return {}
+
+    def reset(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
+
 def create_provider(cfg: SandboxConfig) -> SandboxProvider:
+    if cfg.db_type in ("none", ""):
+        return NoopSandboxProvider()
     if cfg.db_type != "postgres":
         raise ValueError(
-            f"Unsupported db_type for MVP: {cfg.db_type} (only postgres)"
+            f"Unsupported db_type for MVP: {cfg.db_type} (supported: postgres, none)"
         )
     from sandbox.postgres import PostgresSandboxProvider
 

@@ -168,19 +168,74 @@ def version():
     console.print("QC Agent Phase 1 – LangGraph foundation")
 
 
+def _interactive_login_prompt() -> None:
+    from rich.panel import Panel
+    from rich.prompt import Prompt
+
+    console.print(
+        Panel.fit(
+            "[bold cyan]⚡ QC Agent / Pika — Thiết lập tài khoản AI[/bold cyan]\n\n"
+            "Chưa tìm thấy API key hoặc phiên đăng nhập AI hợp lệ.\n"
+            "Vui lòng chọn một phương thức đăng nhập để tiếp tục:\n\n"
+            "  [bold green][1][/bold green] 🔑 [bold]Google Antigravity[/bold] (Gemini 2.5/3, Claude Sonnet/Opus)\n"
+            "  [bold green][2][/bold green] 🤖 [bold]Nhập OpenAI API Key[/bold] (sk-...)\n"
+            "  [bold green][3][/bold green] 🖥️  [bold]Mở TUI Dashboard ở chế độ Offline[/bold]\n"
+            "  [bold red][0][/bold red] ⏻  [bold]Thoát[/bold]",
+            border_style="cyan",
+            title="ĐĂNG NHẬP",
+        )
+    )
+
+    choice = Prompt.ask("Lựa chọn của bạn", choices=["1", "2", "3", "0"], default="1")
+
+    if choice == "1":
+        from auth.antigravity import run_antigravity_login
+        console.print("\n[cyan]Đang mở trình duyệt để xác thực Google Antigravity...[/cyan]")
+        try:
+            creds = run_antigravity_login(timeout=120)
+            email = creds.get("email") or "thành công"
+            console.print(f"[bold green]✔ Đăng nhập thành công:[/bold green] {email}\n")
+        except Exception as e:
+            console.print(f"[bold red]Đăng nhập thất bại:[/bold red] {e}")
+            raise typer.Exit(1)
+    elif choice == "2":
+        api_key = Prompt.ask("Nhập OpenAI API Key (sk-...)")
+        if api_key.strip():
+            env_path = Path(".env")
+            content = env_path.read_text(encoding="utf-8") if env_path.exists() else ""
+            if "OPENAI_API_KEY=" in content:
+                import re
+                content = re.sub(r"OPENAI_API_KEY=.*", f"OPENAI_API_KEY={api_key.strip()}", content)
+            else:
+                content += f"\nOPENAI_API_KEY={api_key.strip()}\n"
+            env_path.write_text(content, encoding="utf-8")
+            settings.openai_api_key = api_key.strip()
+            settings.llm_provider = "openai"
+            console.print("[bold green]✔ Đã lưu API key vào .env![/bold green]\n")
+        else:
+            console.print("[yellow]Bỏ qua nhập key.[/yellow]\n")
+    elif choice == "3":
+        console.print("[dim]Mở TUI Dashboard...[/dim]\n")
+    elif choice == "0":
+        raise typer.Exit(0)
+
+
 @app.command()
 def tui():
     """Mở giao diện TUI dashboard."""
+    import sys
     from agents.llm_factory import get_active_provider
     if get_active_provider() == "none":
-        console.print(
-            "[bold red]Thiếu OPENAI_API_KEY hoặc chưa đăng nhập subscription.[/bold red]\n"
-            "Tạo file .env ở thư mục gốc và điền:\n"
-            "  OPENAI_API_KEY=sk-...\n"
-            "Hoặc đăng nhập Google Antigravity:\n"
-            "  python main.py login antigravity"
-        )
-        raise typer.Exit(1)
+        if not sys.stdin.isatty():
+            console.print(
+                "[bold red]Thiếu OPENAI_API_KEY hoặc chưa đăng nhập subscription.[/bold red]\n"
+                "Tạo file .env ở thư mục gốc và điền:\n"
+                "  OPENAI_API_KEY=sk-...\n"
+                "Hoặc đăng nhập Google Antigravity:\n"
+                "  python main.py login antigravity"
+            )
+            raise typer.Exit(1)
+        _interactive_login_prompt()
 
     # Import trễ: `main.py run` không được trả giá import Textual, và phải chạy
     # được cả khi Textual chưa cài.

@@ -1,0 +1,20 @@
+service:
+  name: order-service
+  start_cmd: "python3 app.py"
+  health_path: /health
+
+sandbox:
+  mode: full_local
+
+database:
+  type: none
+  seed_cmd: "python3 seed.py --manifest /tmp/order_seed_manifest.json"
+
+downstream:
+  - name: inventory
+    env_key: INVENTORY_BASE_URL
+    stub: stubs/inventory
+
+planner:
+  forbid_fabricated_ids: true
+  require_setup_or_seed_for_mutate: true

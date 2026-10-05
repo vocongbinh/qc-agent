@@ -32,14 +32,14 @@ class SelectionModalScreen(ModalScreen):
         max-width: 90;
         height: auto;
         max-height: 80%;
-        background: $surface;
-        border: thick $primary;
+        background: $background;
+        border: round #3f3f46;
         padding: 1 2;
     }
 
     #modal_title {
         text-style: bold;
-        color: $primary;
+        color: $text;
         margin-bottom: 1;
     }
 
@@ -52,6 +52,31 @@ class SelectionModalScreen(ModalScreen):
         height: auto;
         max-height: 16;
         margin-bottom: 1;
+        background: transparent;
+    }
+
+    #modal_table > .datatable--even-row {
+        background: transparent;
+    }
+
+    #modal_table > .datatable--odd-row {
+        background: transparent;
+    }
+
+    #modal_table > .datatable--cursor {
+        background: transparent;
+        color: white;
+        text-style: bold;
+    }
+
+    #modal_table:focus > .datatable--cursor {
+        background: transparent;
+        color: white;
+        text-style: bold;
+    }
+
+    #modal_table .datatable--hover {
+        background: transparent;
     }
 
     #modal_actions {
@@ -113,9 +138,9 @@ class SelectionModalScreen(ModalScreen):
 
             style_status = "green" if "Active" in status or "Signed In" in status or "Configured" in status or "✔" in status else "dim"
             self._table.add_row(
-                Text(key, style="bold cyan"),
+                Text(key, style="bold"),
                 Text(name, style="bold"),
-                Text(desc, style="italic"),
+                Text(desc, style="dim"),
                 Text(status, style=style_status),
                 key=opt.get("id", str(i)),
             )

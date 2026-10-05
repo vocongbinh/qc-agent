@@ -90,6 +90,7 @@ class StatusFooter(Vertical):
         self._selected: set[str] = {"api"}
         self._request: str = ""
         self._status: str = ""
+        self._mode: str = "test"
         self._phase: str = ""
         self._done: int = 0
         self._total: int = 0
@@ -97,6 +98,20 @@ class StatusFooter(Vertical):
         self._input: Optional[Input] = None
         self._status_widget: Optional[Static] = None
         self._checkboxes: dict[str, Checkbox] = {}
+
+    def get_mode(self) -> str:
+        return self._mode
+
+    def set_mode(self, mode: str) -> None:
+        self._mode = mode.lower()
+        if self._input is not None:
+            if self._mode == "debug":
+                self._input.placeholder = "❯ [DEBUG] Enter error log, stacktrace, or endpoint to investigate bug..."
+            elif self._mode == "fix":
+                self._input.placeholder = "❯ [FIX] Describe bug to fix & patch (Aider search/replace)..."
+            else:
+                self._input.placeholder = "❯ [TEST] Describe a testing task... (Type / for commands, Ctrl+P for palette)"
+
 
     def compose(self) -> ComposeResult:
         yield Input(
