@@ -36,6 +36,24 @@ def _substitute(template: Any, context: dict) -> Any:
     return template
 
 
+
+_SEED_TMPL = re.compile(r"^\{\{seed:([\w.\-]+)\}\}$")
+
+
+def _resolve_seed_refs(test: dict, seed_manifest: dict | None) -> dict[str, Any]:
+    context: dict[str, Any] = dict(test.get("test_data") or {})
+    entities = (seed_manifest or {}).get("entities") or {}
+    seed_ref = test.get("seed_ref")
+    if seed_ref and seed_ref in entities:
+        context.setdefault("item_id", entities[seed_ref])
+    for k, v in list(context.items()):
+        if isinstance(v, str):
+            m = _SEED_TMPL.match(v.strip())
+            if m and m.group(1) in entities:
+                context[k] = entities[m.group(1)]
+    return context
+
+
 def _parse_action(action: str) -> tuple[str, str]:
     """'POST /api/v1/login' → ('POST', '/api/v1/login')"""
     parts = action.strip().split(maxsplit=1)
@@ -102,7 +120,7 @@ def _check_body(body: Any, expected_body: dict) -> list[str]:
     return errors
 
 
-def _run_single_api_test(test: dict, base_url: str) -> dict:
+def _run_single_api_test(test: dict, base_url: str, seed_manifest: dict | None = None) -> dict:
     """Chạy 1 test case API, hỗ trợ multi-step + context chaining."""
     start = time.perf_counter()
     result = {
@@ -123,8 +141,8 @@ def _run_single_api_test(test: dict, base_url: str) -> dict:
         if not steps:
             raise ValueError("Test case không có steps")
 
-        # Context ban đầu = test_data
-        context: dict[str, Any] = dict(test.get("test_data") or {})
+        # Context ban đầu = test_data (+ seed_ref / seed templates)
+        context: dict[str, Any] = _resolve_seed_refs(test, seed_manifest)
         expected = test.get("expected") or {}
         last_resp = None
         last_body: Any = None
@@ -221,7 +239,7 @@ def api_executor_node(state: AgentState) -> dict[str, Any]:
             skipped += 1
             continue
 
-        res = _run_single_api_test(test, base_url=base_url)
+        res = _run_single_api_test(test, base_url=base_url, seed_manifest=state.get("seed_manifest"))
         res.setdefault("type", ttype)
         emitter.emit_test_result(res)
         details.append(res)
