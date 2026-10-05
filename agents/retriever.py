@@ -14,26 +14,22 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_repo_root(state: AgentState) -> Path:
-    repo_root = Path(".")
     for cp in state.get("code_paths") or []:
-        cp_path = Path(cp)
-        if cp_path.is_file():
-            return Path(".")
-        matches = list(Path(".").glob(f"**/{cp}"))
-        if matches:
-            rel_parts_len = len(cp_path.parts)
-            if rel_parts_len <= len(matches[0].parts):
-                candidate = matches[0].resolve().parents[rel_parts_len - 1]
-                if candidate.exists():
-                    return candidate
-    return repo_root
+        p = Path(cp)
+        if p.is_dir():
+            return p
+        if p.is_file():
+            for parent in p.parents:
+                if (parent / "go.mod").exists():
+                    return parent
+            return p.parent
+    return Path(".")
 
 
 def codeintel_retriever_node(state: AgentState) -> dict[str, Any]:
-    if not settings.enable_codeintel or not settings.codeintel_db_path.exists():
-        return {"code_intelligence_summary": None}
-
     try:
+        if not settings.enable_codeintel or not settings.codeintel_db_path.exists():
+            return {"code_intelligence_summary": None}
         funcs_res = list_scope_functions(db_path=settings.codeintel_db_path)
         if not funcs_res.get("ok") or not funcs_res.get("data"):
             return {"code_intelligence_summary": None}
@@ -58,12 +54,12 @@ def codeintel_retriever_node(state: AgentState) -> dict[str, Any]:
                 "package": fn.get("package", ""),
                 "complexity": fn["complexity"],
                 "branches": (
-                    branches_res.get("data", {}).get("branches", [])
+                    branches_res.get("data", {}).get("branches", [])[:10]
                     if branches_res.get("ok")
                     else []
                 ),
                 "dependencies": (
-                    deps_res.get("data", {}).get("callees", [])
+                    deps_res.get("data", {}).get("callees", [])[:10]
                     if deps_res.get("ok")
                     else []
                 ),

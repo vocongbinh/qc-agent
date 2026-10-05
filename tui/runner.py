@@ -70,6 +70,7 @@ def build_initial_state(
         "ui_headed": ui_headed,
         "phases": list(phases or []),
         "job_id": str(uuid.uuid4()),
+        "code_intelligence_summary": None,
     }
 
 
@@ -136,7 +137,6 @@ class JobRunner:
             if self._cancelled.is_set():
                 self._emit("cancelled", phase="start")
                 return
-
             # --- Pass 1: tới planner_done ---
             if self._stream_until(state, config, "planner_done"):
                 return
@@ -156,7 +156,7 @@ class JobRunner:
                 # bấm Stop, và người dùng tưởng mình chủ động dừng.
                 self._emit(
                     "run_error",
-                    message=f"Không có phản hồi review sau {self.review_gate.timeout:.0f}s.",
+                    message=f"No review response after {self.review_gate.timeout:.0f}s.",
                     step="planner_done",
                 )
                 return
@@ -167,11 +167,10 @@ class JobRunner:
                 self._emit(
                     "log",
                     level="warn",
-                    text="Không còn test case nào được chọn — run dừng trước generator.",
+                    text="No test cases selected — stopping run before generator.",
                 )
                 self._emit("cancelled", phase="review")
                 return
-
             # Ghi plan đã lọc + human_approved *trước* khi generator chạy, để
             # generator không sinh lại những case người dùng vừa bỏ.
             self.graph.update_state(
