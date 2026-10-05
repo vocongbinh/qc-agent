@@ -54,3 +54,27 @@ def test_sandbox_session_external_yields_alias_manifest(tmp_path):
     with sandbox_session(cfg, tmp_path) as (env, manifest):
         assert env == {}
         assert manifest["entities"]["item.cafe_kem_may"].startswith("a078b105")
+
+
+@pytest.mark.skipif(not docker, reason="Docker not available")
+def test_postgres_template_reset_path():
+    from sandbox.postgres import PostgresSandboxProvider
+    import psycopg
+
+    provider = PostgresSandboxProvider(schema="public")
+    env = provider.start()
+    try:
+        with psycopg.connect(env["DATABASE_URL"], autocommit=True) as conn:
+            conn.execute("CREATE TABLE IF NOT EXISTS public.demo (id INT PRIMARY KEY)")
+            conn.execute("INSERT INTO public.demo(id) VALUES (1) ON CONFLICT DO NOTHING")
+        provider.bake_template("app_seed")
+        with psycopg.connect(env["DATABASE_URL"], autocommit=True) as conn:
+            conn.execute("INSERT INTO public.demo(id) VALUES (2)")
+            count = conn.execute("SELECT count(*) FROM public.demo").fetchone()[0]
+            assert count == 2
+        provider.reset_via_template("app_seed")
+        with psycopg.connect(env["DATABASE_URL"], autocommit=True) as conn:
+            count = conn.execute("SELECT count(*) FROM public.demo").fetchone()[0]
+            assert count == 1
+    finally:
+        provider.stop()

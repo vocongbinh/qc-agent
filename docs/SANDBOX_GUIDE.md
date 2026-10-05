@@ -45,3 +45,16 @@ Design: `docs/superpowers/specs/2026-10-05-sandbox-runner-design.md`
 Plan: `docs/superpowers/plans/2026-10-05-sandbox-runner.md`
 
 Sandbox is independent from Codeintel (`ENABLE_CODEINTEL`).
+
+## Phase 5: Warm reset (TEMPLATE)
+
+After migrate+seed once:
+
+```python
+provider.bake_template("app_seed")
+# later between suites:
+provider.reset_via_template("app_seed")
+```
+
+Benchmark **cold** (compose up + migrate + seed) separately from **warm** (TEMPLATE recreate).
+Do not expect warm targets on a cold Docker pull.

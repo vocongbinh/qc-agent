@@ -30,6 +30,7 @@ class PostgresSandboxProvider:
         self.project_name = f"qc_sandbox_{uuid.uuid4().hex[:8]}"
         self.port: int | None = None
         self._env: dict[str, str] = {}
+        self._template_name: str | None = None
 
     def _compose(self, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
         if self.port is None:
@@ -107,6 +108,52 @@ class PostgresSandboxProvider:
                 return
             tables = ", ".join(f'"{self.schema}"."{r[0]}"' for r in rows)
             conn.execute(f"TRUNCATE {tables} CASCADE")
+
+
+    def bake_template(self, template_name: str = "app_seed") -> None:
+        """Snapshot current DB as a TEMPLATE database for fast warm resets."""
+        if not self._env:
+            raise RuntimeError("Provider not started")
+        admin_url = (
+            f"postgresql://test:test@localhost:{self.port}/postgres"
+        )
+        db_name = self._env["DB_NAME"]
+        with psycopg.connect(admin_url, autocommit=True) as conn:
+            conn.execute(
+                """
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = %s AND pid <> pg_backend_pid()
+                """,
+                (db_name,),
+            )
+            conn.execute(f'DROP DATABASE IF EXISTS "{template_name}"')
+            conn.execute(
+                f'CREATE DATABASE "{template_name}" TEMPLATE "{db_name}"'
+            )
+        self._template_name = template_name
+
+    def reset_via_template(self, template_name: str | None = None) -> None:
+        """Recreate working DB FROM TEMPLATE (warm path). Falls back to TRUNCATE."""
+        tmpl = template_name or getattr(self, "_template_name", None)
+        if not tmpl:
+            self.reset()
+            return
+        if not self._env:
+            raise RuntimeError("Provider not started")
+        admin_url = f"postgresql://test:test@localhost:{self.port}/postgres"
+        db_name = self._env["DB_NAME"]
+        with psycopg.connect(admin_url, autocommit=True) as conn:
+            conn.execute(
+                """
+                SELECT pg_terminate_backend(pid)
+                FROM pg_stat_activity
+                WHERE datname = %s AND pid <> pg_backend_pid()
+                """,
+                (db_name,),
+            )
+            conn.execute(f'DROP DATABASE IF EXISTS "{db_name}"')
+            conn.execute(f'CREATE DATABASE "{db_name}" TEMPLATE "{tmpl}"')
 
     def stop(self) -> None:
         if self.port is None:
