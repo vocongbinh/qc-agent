@@ -22,6 +22,12 @@ Nhiệm vụ: Phân tích yêu cầu của user, tài liệu (PRD, API doc, User
 5. Gắn **requirement_id** nếu tìm thấy trong tài liệu (US-xxx, REQ-xxx...).
 6. Gắn **module** rõ ràng (Authentication, Payment, Order...).
 7. Với UI test, steps dùng action: goto | fill | click | expect | press | wait.
+8. **CẤM ID bịa** cho mutate (PUT/PATCH/DELETE): không viết `item_12345` hoặc UUID bịa vào path.
+   Nguồn ID hợp lệ chỉ gồm:
+   (a) `seed_ref` + `{{item_id}}` khi có Seed Manifest,
+   (b) multi-step: POST tạo resource → `extract` → dùng `{{extracted_key}}`,
+   (c) `test_data` do user/tài liệu cung cấp sẵn.
+9. Ưu tiên path OpenAPI thật (ví dụ `/cms/items/{itemId}`), không bịa `/api/v1/...` nếu spec không có.
 
 ### Schema TestPlan (bắt buộc tuân thủ):
 {
@@ -100,6 +106,14 @@ def planner_node(state: AgentState) -> dict[str, Any]:
     if codeintel_summary:
         codeintel_section = f"\nThông tin Code Intelligence (nhánh & dependencies trích xuất):\n{json.dumps(codeintel_summary, ensure_ascii=False, indent=2)}\n"
 
+    seed_manifest = state.get("seed_manifest")
+    seed_section = ""
+    if seed_manifest:
+        seed_section = (
+            "\nSeed Manifest (ID thật — dùng seed_ref / {{item_id}} / {{seed:alias}}):\n"
+            f"{json.dumps(seed_manifest, ensure_ascii=False, indent=2)}\n"
+        )
+
     user_content = f"""Yêu cầu của user:
 {state["user_request"]}
 
@@ -111,7 +125,7 @@ Tài liệu:
 
 OpenAPI (nếu có):
 {state.get("openapi_spec") or "(không có)"}
-{codeintel_section}
+{codeintel_section}{seed_section}
 Lưu ý: Mặc định ưu tiên type="api".
 - type="ui" khi user yêu cầu UI/E2E.
 - type="chaos" khi resilience/redis/kafka/db chết/network.
@@ -145,6 +159,17 @@ Chaos test case cần field "chaos": {{"action": "stop_container"|"concurrent"|"
         return {
             "test_plan": None,
             "error": f"Planner không sinh được Test Plan hợp lệ: {e}\nRaw (first 800 chars): {raw[:800]}",
+            "current_step": "planner_failed",
+            "messages": [response],
+        }
+
+    from agents.id_policy import validate_mutate_ids
+
+    id_errors = validate_mutate_ids(plan_dict, seed_manifest=state.get("seed_manifest"))
+    if id_errors:
+        return {
+            "test_plan": None,
+            "error": "Planner ID policy failed:\n- " + "\n- ".join(id_errors),
             "current_step": "planner_failed",
             "messages": [response],
         }

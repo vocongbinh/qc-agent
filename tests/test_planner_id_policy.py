@@ -104,3 +104,72 @@ def test_skips_non_api_and_get():
         ]
     }
     assert validate_mutate_ids(plan, seed_manifest=None) == []
+
+
+from types import SimpleNamespace
+from agents.planner import planner_node
+from agents.state import AgentState
+
+
+class _FakeLLM:
+    def __init__(self, content: str):
+        self._content = content
+
+    def invoke(self, messages):
+        return SimpleNamespace(content=self._content)
+
+
+def _base_state(**kwargs) -> AgentState:
+    state: AgentState = {
+        "user_request": "test update item",
+        "documents": [],
+        "code_paths": [],
+        "openapi_spec": None,
+        "messages": [],
+        "test_plan": None,
+        "generated_tests": [],
+        "human_approved": False,
+        "shared_context": {},
+        "execution_result": None,
+        "report_path": None,
+        "final_summary": None,
+        "current_step": "init",
+        "error": None,
+        "ui_headed": False,
+    }
+    state.update(kwargs)
+    return state
+
+
+BAD_PLAN = """
+{
+  "title": "t",
+  "summary": "s",
+  "scope": "api",
+  "priority_order": ["critical"],
+  "test_cases": [{
+    "id": "TC_BAD",
+    "title": "bad",
+    "type": "api",
+    "priority": "critical",
+    "test_data": {},
+    "steps": [{"step": 1, "action": "PUT /cms/items/item_12345", "data": {}}],
+    "expected": {"status_code": 400},
+    "status": "untested"
+  }],
+  "risks": [],
+  "assumptions": [],
+  "estimated_duration_min": 5,
+  "created_by": "QC-Agent-Planner"
+}
+"""
+
+
+def test_planner_node_rejects_invented_ids(monkeypatch):
+    import agents.planner as planner_mod
+
+    monkeypatch.setattr(planner_mod, "create_planner_llm", lambda: _FakeLLM(BAD_PLAN))
+    result = planner_node(_base_state())
+    assert result.get("test_plan") is None
+    assert result.get("error")
+    assert "invented" in result["error"].lower() or "TC_BAD" in result["error"]
