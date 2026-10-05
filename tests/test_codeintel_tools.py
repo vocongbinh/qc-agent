@@ -74,7 +74,7 @@ def test_trace_execution_path_and_dependencies(tmp_path: Path):
     conn = kuzu.Connection(db)
     conn.execute(
         f"MATCH (src:Function {{id: '{main_id}'}}), (dst:Function {{id: '{proc_order_id}'}}) "
-        f"CREATE (src)-[:CALLS {{line_number: 10, is_external: false}}]->(dst)"
+        f"MERGE (src)-[:CALLS {{line_number: 10, is_external: false}}]->(dst)"
     )
     del conn
     del db

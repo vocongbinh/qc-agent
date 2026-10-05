@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import tree_sitter_go as tsgo
 from tree_sitter import Language, Parser, Node
 
@@ -20,7 +20,7 @@ class ExtractedFunction:
     end_byte: int
     cyclomatic_complexity: int
     branch_count: int
-
+    calls: list[tuple[str, int]] = field(default_factory=list)
 
 def _extract_package(root_node: Node, source_bytes: bytes) -> str:
     for child in root_node.children:
@@ -51,6 +51,25 @@ def _calc_complexity_and_branches(node: Node) -> tuple[int, int]:
         stack.extend(reversed(curr.children))
 
     return 1 + branches, branches
+
+def _extract_calls_from_node(node: Node, source_bytes: bytes) -> list[tuple[str, int]]:
+    calls: list[tuple[str, int]] = []
+    stack = [node]
+    while stack:
+        curr = stack.pop()
+        if curr.type == "call_expression":
+            fn_node = curr.child_by_field_name("function")
+            if fn_node:
+                field_node = fn_node.child_by_field_name("field")
+                name = (
+                    source_bytes[field_node.start_byte:field_node.end_byte].decode("utf-8", errors="replace")
+                    if field_node
+                    else source_bytes[fn_node.start_byte:fn_node.end_byte].decode("utf-8", errors="replace")
+                )
+                if name:
+                    calls.append((name, curr.start_point[0] + 1))
+        stack.extend(reversed(curr.children))
+    return calls
 
 
 def parse_go_file(rel_path: str, source_code: str) -> list[ExtractedFunction]:
@@ -87,6 +106,8 @@ def parse_go_file(rel_path: str, source_code: str) -> list[ExtractedFunction]:
 
             complexity, branches = _calc_complexity_and_branches(child)
 
+            func_calls = _extract_calls_from_node(child, source_bytes)
+
             results.append(
                 ExtractedFunction(
                     id=func_id,
@@ -100,6 +121,7 @@ def parse_go_file(rel_path: str, source_code: str) -> list[ExtractedFunction]:
                     end_byte=child.end_byte,
                     cyclomatic_complexity=complexity,
                     branch_count=branches,
+                    calls=func_calls,
                 )
             )
     return results

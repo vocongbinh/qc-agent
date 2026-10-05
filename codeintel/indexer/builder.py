@@ -79,7 +79,30 @@ def build_index(
     scip_file = root / "index.scip"
     occurrences = parse_scip_occurrences(scip_file)
     calls = stitch_calls_and_types(all_functions, occurrences, internal_module_prefix=module_prefix)
-    # 4. Insert into KùzuDB using writer connection
+
+    # Fallback to AST-extracted calls if no SCIP index is present
+    if not calls:
+        funcs_by_name: dict[str, list[ExtractedFunction]] = {}
+        for fn in all_functions:
+            funcs_by_name.setdefault(fn.name, []).append(fn)
+
+        for fn in all_functions:
+            for callee_name, line_num in getattr(fn, "calls", []):
+                candidates = funcs_by_name.get(callee_name, [])
+                if not candidates:
+                    continue
+                best_cand = candidates[0]
+                for cand in candidates:
+                    if cand.file_path == fn.file_path or (cand.package and cand.package == fn.package):
+                        best_cand = cand
+                        break
+                calls.append({
+                    "caller_id": fn.id,
+                    "callee_id": best_cand.id,
+                    "callee_symbol": callee_name,
+                    "line_number": line_num,
+                    "is_external": False,
+                })
     db = kuzu.Database(str(db_p), read_only=False)
     conn = kuzu.Connection(db)
 
@@ -137,18 +160,29 @@ def build_index(
             )
         # Insert CALLS relationships if both caller and callee exist or store callee
         for c in calls:
-            # Check if callee is known in index
-            conn.execute(
-                """MATCH (caller:Function {id: $caller_id}), (callee:Function)
-                   WHERE $callee_symbol CONTAINS callee.name
-                   MERGE (caller)-[rel:CALLS {line_number: $line, is_external: $is_ext}]->(callee)""",
-                {
-                    "caller_id": c["caller_id"],
-                    "callee_symbol": c["callee_symbol"],
-                    "line": c["line_number"],
-                    "is_ext": c["is_external"],
-                },
-            )
+            if c.get("callee_id"):
+                conn.execute(
+                    """MATCH (caller:Function {id: $caller_id}), (callee:Function {id: $callee_id})
+                       MERGE (caller)-[rel:CALLS {line_number: $line, is_external: $is_ext}]->(callee)""",
+                    {
+                        "caller_id": c["caller_id"],
+                        "callee_id": c["callee_id"],
+                        "line": c["line_number"],
+                        "is_ext": c["is_external"],
+                    },
+                )
+            else:
+                conn.execute(
+                    """MATCH (caller:Function {id: $caller_id}), (callee:Function)
+                       WHERE $callee_symbol CONTAINS callee.name
+                       MERGE (caller)-[rel:CALLS {line_number: $line, is_external: $is_ext}]->(callee)""",
+                    {
+                        "caller_id": c["caller_id"],
+                        "callee_symbol": c["callee_symbol"],
+                        "line": c["line_number"],
+                        "is_ext": c["is_external"],
+                    },
+                )
 
         # 5. Ingest OpenAPI endpoints if available
         openapi_candidates = [root / "openapi.json", root / "openapi.yaml", root / "swagger.json"]
