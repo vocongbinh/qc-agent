@@ -37,22 +37,19 @@ def _calc_complexity_and_branches(node: Node) -> tuple[int, int]:
         "for_statement",
         "expression_switch_statement",
         "type_switch_statement",
-        "communication_case",
         "expression_case",
+        "type_case",
+        "communication_case",
     }
     operator_types = {"&&", "||"}
     branches = 0
-
-    def traverse(n: Node) -> None:
-        nonlocal branches
-        if n.type in branch_types:
+    stack = [node]
+    while stack:
+        curr = stack.pop()
+        if curr.type in branch_types or curr.type in operator_types:
             branches += 1
-        elif n.type in operator_types:
-            branches += 1
-        for child in n.children:
-            traverse(child)
+        stack.extend(reversed(curr.children))
 
-    traverse(node)
     return 1 + branches, branches
 
 

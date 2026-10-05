@@ -145,3 +145,56 @@ def test_parse_go_file_without_package_clause_defaults_to_main():
     assert len(funcs) == 1
     assert funcs[0].name == "Standalone"
     assert funcs[0].package == "main"
+
+
+def test_parse_go_file_type_switch_and_select():
+    code = """package concurrency
+
+func ProcessItem(val interface{}, ch chan int) string {
+    switch v := val.(type) {
+    case int:
+        return "int"
+    case string:
+        return "string"
+    default:
+        return "other"
+    }
+
+    select {
+    case x := <-ch:
+        return "received"
+    default:
+        return "empty"
+    }
+}
+"""
+    funcs = parse_go_file("concurrency/worker.go", code)
+    assert len(funcs) == 1
+    fn = funcs[0]
+    assert fn.name == "ProcessItem"
+    # type switch: 1 (type_switch_statement) + 2 (case int, case string) = 3
+    # select: 1 (communication_case x := <-ch) = 1
+    # total branches = 4, cyclomatic complexity = 1 + 4 = 5
+    assert fn.branch_count >= 3
+    assert fn.cyclomatic_complexity >= 4
+
+
+def test_parse_go_file_generic_function():
+    code = """package util
+
+func Find[T comparable](slice []T, target T) int {
+    for i, v := range slice {
+        if v == target {
+            return i
+        }
+    }
+    return -1
+}
+"""
+    funcs = parse_go_file("util/generic.go", code)
+    assert len(funcs) == 1
+    fn = funcs[0]
+    assert fn.name == "Find"
+    assert "Find[T comparable]" in fn.signature
+    assert fn.branch_count == 2
+    assert fn.cyclomatic_complexity == 3
