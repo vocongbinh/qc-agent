@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     max_retries: int = 2
     temperature: float = 0.2
 
+    # Code Intelligence
+    enable_codeintel: bool = False
+    codeintel_db_path: Path = project_root / ".codeintel_db"
+
     # ----- Stack under test (chỉnh theo môi trường thật) -----
     # App / API
     default_base_url: str = "http://localhost:8000"
