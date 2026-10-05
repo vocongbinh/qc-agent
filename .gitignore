@@ -26,4 +26,11 @@ test_cases/*.json
 ui_artifacts/
 
 # OS
+
+# Local databases & scratch
+.codeintel_db
+.codeintel_db.wal
+explorer.db
+index_stats.json
+.kiro/
 .DS_Store

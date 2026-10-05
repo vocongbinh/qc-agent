@@ -239,7 +239,10 @@ def api_executor_node(state: AgentState) -> dict[str, Any]:
             skipped += 1
             continue
 
-        res = _run_single_api_test(test, base_url=base_url, seed_manifest=state.get("seed_manifest"))
+        try:
+            res = _run_single_api_test(test, base_url=base_url, seed_manifest=state.get("seed_manifest"))
+        except TypeError:
+            res = _run_single_api_test(test, base_url=base_url)
         res.setdefault("type", ttype)
         emitter.emit_test_result(res)
         details.append(res)

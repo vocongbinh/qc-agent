@@ -71,6 +71,7 @@ def build_initial_state(
         "phases": list(phases or []),
         "job_id": str(uuid.uuid4()),
         "code_intelligence_summary": None,
+        "seed_manifest": None,
     }
 
 
