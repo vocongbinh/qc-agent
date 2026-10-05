@@ -43,10 +43,18 @@ def build_index(repo_root: Path | str, db_path: Path | str) -> dict[str, Any]:
         all_functions.extend(funcs)
         files_indexed += 1
     # 3. Read SCIP index if present
+    module_prefix = ""
+    go_mod_file = root / "go.mod"
+    if go_mod_file.exists():
+        for line in go_mod_file.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if line.startswith("module "):
+                module_prefix = line.split(maxsplit=1)[1].strip()
+                break
+
     scip_file = root / "index.scip"
     occurrences = parse_scip_occurrences(scip_file)
-    calls = stitch_calls_and_types(all_functions, occurrences)
-
+    calls = stitch_calls_and_types(all_functions, occurrences, internal_module_prefix=module_prefix)
     # 4. Insert into KùzuDB using writer connection
     db = kuzu.Database(str(db_p), read_only=False)
     conn = kuzu.Connection(db)

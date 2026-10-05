@@ -58,5 +58,17 @@ def init_schema(db_path: str | Path) -> None:
     p.parent.mkdir(parents=True, exist_ok=True)
     db = kuzu.Database(str(p), read_only=False)
     conn = kuzu.Connection(db)
-    for stmt in DDL_STATEMENTS:
-        conn.execute(stmt)
+    try:
+        for stmt in DDL_STATEMENTS:
+            conn.execute(stmt)
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        try:
+            db.close()
+        except Exception:
+            pass
+        del conn
+        del db

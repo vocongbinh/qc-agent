@@ -66,9 +66,9 @@ def spy_app(monkeypatch) -> _QCTAppSpy:
 @pytest.fixture
 def no_api_key(monkeypatch) -> None:
     monkeypatch.setattr(main.settings, "openai_api_key", None)
-
-
-# ----- registration -----
+    monkeypatch.setattr(main.settings, "llm_provider", "auto")
+    import agents.llm_factory as factory
+    monkeypatch.setattr(factory, "is_antigravity_available", lambda: False)
 
 
 def test_tui_command_is_registered():
@@ -80,10 +80,8 @@ def test_run_and_version_are_still_registered():
     assert {"run", "version"} <= _command_names()
 
 
-def test_registered_commands_are_exactly_run_version_tui():
-    assert _command_names() == {"run", "version", "tui"}
-
-
+def test_registered_commands_are_expected():
+    assert _command_names() == {"run", "version", "tui", "login", "status", "index"}
 def test_app_help_advertises_the_tui():
     result = runner.invoke(main.app, ["--help"])
     assert result.exit_code == 0
@@ -124,6 +122,16 @@ def test_tui_starts_the_app_when_key_is_present(monkeypatch, spy_app):
     assert spy_app.constructed == 1
     assert spy_app.ran == 1
 
+
+def test_tui_starts_when_antigravity_is_available(monkeypatch, spy_app):
+    """Nếu không có OPENAI_API_KEY nhưng có Google Antigravity subscription, TUI vẫn chạy."""
+    monkeypatch.setattr(main.settings, "openai_api_key", None)
+    import agents.llm_factory as factory
+    monkeypatch.setattr(factory, "is_antigravity_available", lambda: True)
+    result = runner.invoke(main.app, ["tui"])
+    assert result.exit_code == 0
+    assert spy_app.constructed == 1
+    assert spy_app.ran == 1
 
 def test_tui_resets_the_bus_before_running(monkeypatch, spy_app):
     """Bus là singleton module-level. Không reset thì state của lần chạy
