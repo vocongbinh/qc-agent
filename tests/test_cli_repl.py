@@ -55,7 +55,7 @@ def test_get_git_branch():
 def test_borders_format():
     from cli.repl import _get_top_border, _get_bottom_border
     top = _get_top_border("test")
-    assert top.startswith("╭─ TEST ")
+    assert top.startswith("╭─ [TEST] ")
     assert top.endswith("╮")
     bottom = _get_bottom_border()
     assert bottom.startswith("╰")

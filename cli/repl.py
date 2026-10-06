@@ -54,10 +54,13 @@ current_mode = "test"
 
 def _get_top_border(mode: str) -> str:
     cols = shutil.get_terminal_size().columns
-    mode_tag = f" {mode.upper()} "
-    dash_len = max(2, cols - 4 - len(mode_tag))
-    return f"╭─{mode_tag}" + "─" * dash_len + "╮"
-
+    branch = _get_git_branch()
+    cwd = Path.cwd().name
+    model = _get_active_model_name()
+    status = f"π ☯ {model} · ~/{cwd} · ⎇ {branch}"
+    header = f"╭─ [{mode.upper()}] ── {status} "
+    remaining = max(2, cols - len(header) - 1)
+    return header + "─" * remaining + "╮"
 
 def _get_bottom_border() -> str:
     cols = shutil.get_terminal_size().columns
@@ -277,7 +280,6 @@ def run_repl(code_path: str = ".") -> None:
                     ("class:border", "│ "),
                     ("class:prompt", "> "),
                 ],
-                bottom_toolbar=_bottom_toolbar,
             ).strip()
 
             closing_border = _get_bottom_border()
