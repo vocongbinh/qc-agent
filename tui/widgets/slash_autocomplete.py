@@ -60,7 +60,7 @@ class SlashAutocomplete(Static):
 
     DEFAULT_CSS = """
     SlashAutocomplete {
-        width: 72;
+        width: 76;
         height: auto;
         max-height: 8;
         background: transparent;
@@ -74,6 +74,12 @@ class SlashAutocomplete(Static):
         max-height: 7;
         background: transparent;
         border: none;
+        scrollbar-size-vertical: 1;
+        scrollbar-background: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-color: #585b70;
+        scrollbar-gutter: auto;
     }
 
     #ac_table > .datatable--even-row {
@@ -123,7 +129,7 @@ class SlashAutocomplete(Static):
         for i, item in enumerate(self.filtered):
             is_selected = (i == self._selected_index)
             if is_selected:
-                cmd_text = Text(f"❯ {item['cmd']}", style="bold white")
+                cmd_text = Text(f"❯ {item['cmd']}", style="bold")
                 desc_text = Text(item["desc"], style="bold")
             else:
                 cmd_text = Text(f"  {item['cmd']}", style="dim")
