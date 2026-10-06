@@ -330,6 +330,7 @@ class QCTApp(App):
         self.footer.set_running(self.running)
         self._sync_active_model_badge()
         self._start_pump()
+        self.action_focus_request()
     def on_unmount(self) -> None:
         for name in ("pump_task", "history_task"):
             task = getattr(self, name)
