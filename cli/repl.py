@@ -8,10 +8,16 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from prompt_toolkit import PromptSession
+from prompt_toolkit.application import Application
+from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit, Window
+from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
+from prompt_toolkit.layout.layout import Layout
+from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.markdown import Markdown
@@ -40,7 +46,7 @@ SLASH_COMMANDS = {
 }
 
 REPL_STYLE = Style.from_dict({
-    "border": "#4b5563",
+    "border": "#38bdf8",
     "prompt": "bold #38bdf8",
     "completion-menu.completion": "bg:#1e1e2e #cdd6f4",
     "completion-menu.completion.current": "bg:#313244 #ffffff bold",
@@ -65,6 +71,106 @@ def _get_top_border(mode: str) -> str:
 def _get_bottom_border() -> str:
     cols = shutil.get_terminal_size().columns
     return "╰" + "─" * (cols - 2) + "╯"
+
+def prompt_box(mode: str, history: Any, completer: Any) -> str:
+    """Render a unified 3-line input box inline on terminal stdout (all 3 lines visible while typing)."""
+    top_str = _get_top_border(mode)
+    bottom_str = _get_bottom_border()
+
+    kb = KeyBindings()
+    buf = Buffer(
+        history=history,
+        completer=completer,
+        complete_while_typing=True,
+    )
+
+    @kb.add("enter")
+    def _on_enter(event: Any) -> None:
+        b = event.current_buffer
+        if b.complete_state and b.complete_state.current_completion:
+            b.apply_completion(b.complete_state.current_completion)
+        else:
+            event.app.exit(result=b.text)
+
+    @kb.add("tab")
+    def _on_tab(event: Any) -> None:
+        b = event.current_buffer
+        if b.complete_state:
+            b.complete_next()
+        else:
+            b.start_completion(select_first=True)
+
+    @kb.add("escape")
+    def _on_esc(event: Any) -> None:
+        b = event.current_buffer
+        if b.complete_state:
+            b.cancel_completion()
+
+    @kb.add("up")
+    def _on_up(event: Any) -> None:
+        b = event.current_buffer
+        if b.complete_state:
+            b.complete_previous()
+        else:
+            b.auto_up()
+
+    @kb.add("down")
+    def _on_down(event: Any) -> None:
+        b = event.current_buffer
+        if b.complete_state:
+            b.complete_next()
+        else:
+            b.auto_down()
+
+    @kb.add("c-c")
+    def _on_sigint(event: Any) -> None:
+        event.app.exit(exception=KeyboardInterrupt())
+
+    @kb.add("c-d")
+    def _on_eof(event: Any) -> None:
+        event.app.exit(exception=EOFError())
+
+    top_w = Window(
+        FormattedTextControl(top_str),
+        height=1,
+        dont_extend_height=True,
+        style="class:border",
+    )
+    input_w = Window(
+        BufferControl(buffer=buf),
+        height=1,
+        dont_extend_height=True,
+        get_line_prefix=lambda line_number, wrap_count: [
+            ("class:border", "│ "),
+            ("class:prompt", "> "),
+        ],
+    )
+    bottom_w = Window(
+        FormattedTextControl(bottom_str),
+        height=1,
+        dont_extend_height=True,
+        style="class:border",
+    )
+
+    main_container = HSplit([top_w, input_w, bottom_w])
+    float_container = FloatContainer(
+        content=main_container,
+        floats=[
+            Float(
+                xcursor=True,
+                ycursor=True,
+                content=CompletionsMenu(max_height=8),
+            )
+        ],
+    )
+
+    app: Application[str] = Application(
+        layout=Layout(float_container),
+        key_bindings=kb,
+        style=REPL_STYLE,
+        full_screen=False,
+    )
+    return app.run()
 
 
 def _get_git_branch() -> str:
@@ -254,12 +360,8 @@ def run_repl(code_path: str = ".") -> None:
     history_dir = Path.home() / ".qc-agent"
     history_dir.mkdir(parents=True, exist_ok=True)
     history_file = history_dir / "history.txt"
-
-    session: PromptSession[str] = PromptSession(
-        history=FileHistory(str(history_file)),
-        completer=SlashCommandCompleter(),
-        style=REPL_STYLE,
-    )
+    history = FileHistory(str(history_file))
+    completer = SlashCommandCompleter()
 
     console.print(
         Panel.fit(
@@ -272,18 +374,11 @@ def run_repl(code_path: str = ".") -> None:
     global current_mode
     while True:
         try:
-            top_border = _get_top_border(current_mode)
-            console.print(f"[#4b5563]{top_border}[/#4b5563]")
-
-            user_input = session.prompt(
-                [
-                    ("class:border", "│ "),
-                    ("class:prompt", "> "),
-                ],
+            user_input = prompt_box(
+                mode=current_mode,
+                history=history,
+                completer=completer,
             ).strip()
-
-            closing_border = _get_bottom_border()
-            console.print(f"[#4b5563]{closing_border}[/#4b5563]")
 
             if not user_input:
                 continue
