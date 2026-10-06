@@ -238,8 +238,10 @@ class QCTApp(App):
     }
 
     #slash_ac {
-        margin-left: 1;
-        margin-bottom: 0;
+        width: 1fr;
+        margin: 0;
+        padding: 0 1;
+        background: transparent;
     }
     """
     def __init__(
@@ -318,11 +320,11 @@ class QCTApp(App):
         # 2. Live dynamic thinking spinner bar (OpenCode style, above input!)
         yield self.thinking_bar
 
-        # 3. Autocomplete popup (above input)
-        yield self.slash_ac
-
-        # 4. Two-tier bottom bar
+        # 3. Two-tier bottom bar (prompt input + status bar)
         yield self.footer
+
+        # 4. Autocomplete dropdown (directly below input/footer!)
+        yield self.slash_ac
 
         # 5. Hidden drawer for components (keeps tests 100% passing and available via commands)
         with Vertical(id="hidden_drawer"):
