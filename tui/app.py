@@ -144,6 +144,13 @@ class QCTApp(App):
         background: transparent;
     }
 
+    RichLog {
+        background: transparent;
+        overflow-y: auto;
+        scrollbar-background: transparent;
+        scrollbar-gutter: auto;
+    }
+
     #hidden_drawer {
         display: none;
     }
@@ -208,6 +215,7 @@ class QCTApp(App):
         opacity: 0%;
         margin: 0;
         padding: 0;
+        background: transparent;
     }
 
     #hidden_controls Button {
@@ -217,6 +225,8 @@ class QCTApp(App):
         min-width: 1;
         width: 1;
         height: 1;
+        background: transparent;
+        color: transparent;
     }
 
     #hidden_controls Checkbox {

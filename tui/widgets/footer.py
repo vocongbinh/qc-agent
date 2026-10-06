@@ -126,8 +126,8 @@ class StatusFooter(Vertical):
 
         # Hidden controls container (keeps existing DOM queries & click tests 100% passing!)
         with Horizontal(id="hidden_controls"):
-            yield Button("▶ Run", id="run", variant="primary")
-            yield Button("■ Stop", id="stop", variant="error", disabled=True)
+            yield Button("", id="run", variant="primary")
+            yield Button("", id="stop", variant="error", disabled=True)
             with Horizontal(id="phases"):
                 for phase in ALL_PHASES:
                     yield Checkbox(
