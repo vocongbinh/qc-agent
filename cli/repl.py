@@ -14,7 +14,7 @@ from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.document import Document
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
-from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit, Window
+from prompt_toolkit.layout.containers import Float, FloatContainer, HSplit, VSplit, Window
 from prompt_toolkit.layout.controls import BufferControl, FormattedTextControl
 from prompt_toolkit.layout.layout import Layout
 from prompt_toolkit.layout.menus import CompletionsMenu
@@ -52,37 +52,76 @@ REPL_STYLE = Style.from_dict({
     "completion-menu.completion.current": "bg:#313244 #ffffff bold",
     "completion-menu.meta.completion": "bg:#1e1e2e #6c7086",
     "completion-menu.meta.completion.current": "bg:#313244 #a6adc8",
-    "bottom-toolbar": "#a6adc8 bg:#181825",
 })
 
 current_mode = "test"
 
 
-def _get_top_border(mode: str) -> str:
+def _format_top_left(mode: str) -> str:
+    """Format the top-left status bar dynamically to fit current terminal width."""
     cols = shutil.get_terminal_size().columns
     branch = _get_git_branch()
     cwd = Path.cwd().name
     model = _get_active_model_name()
-    status = f"π ☯ {model} · ~/{cwd} · ⎇ {branch}"
-    header = f"╭─ [{mode.upper()}] ── {status} "
-    remaining = max(2, cols - len(header) - 1)
-    return header + "─" * remaining + "╮"
+    status = f"π {model} · ~/{cwd} · {branch}"
+    prefix = f"╭─ [{mode.upper()}] ── "
+    avail = cols - len(prefix) - 4
+    if avail < 8:
+        return f"╭─ [{mode.upper()}] "
+    if len(status) > avail:
+        status = status[:avail - 1] + "…"
+    return f"{prefix}{status} "
 
-def _get_bottom_border() -> str:
-    cols = shutil.get_terminal_size().columns
-    return "╰" + "─" * (cols - 2) + "╯"
+
+def _physical_rows(used_columns: int, columns: int) -> int:
+    """How many terminal rows a line of `used_columns` occupies after wrapping."""
+    if columns <= 0:
+        return 1
+    if used_columns <= 0:
+        return 1
+    return -(-used_columns // columns)
+
+
+def _wrapped_rows_above_cursor(screen: Any, new_width: int, cursor_x: int, cursor_y: int) -> int:
+    """Physical rows from the top of the last frame down to the cursor.
+
+    The terminal reflows the previous frame before SIGWINCH is delivered, so
+    the cursor sits lower than prompt_toolkit's logical y. Moving up by this
+    count lands on the first row of that frame.
+    """
+    width = max(1, new_width)
+    above = 0
+    if screen is not None:
+        for y in range(min(cursor_y, screen.height)):
+            row = screen.data_buffer[y]
+            used = max((index + (cell.width or 1) for index, cell in row.items()), default=0)
+            above += _physical_rows(used, width)
+    return above + max(0, cursor_x) // width
+
+
+def _border_row(left: Any, right: str) -> VSplit:
+    """One border row that stretches with the terminal and never wraps."""
+    left_ctrl = FormattedTextControl(left) if callable(left) else FormattedTextControl(str(left))
+    return VSplit(
+        [
+            Window(left_ctrl, height=1, dont_extend_width=True, wrap_lines=False, style="class:border"),
+            Window(char="─", height=1, wrap_lines=False, style="class:border"),
+            Window(FormattedTextControl(right), height=1, dont_extend_width=True, wrap_lines=False, style="class:border"),
+        ],
+        height=1,
+    )
+
 
 def prompt_box(mode: str, history: Any, completer: Any) -> str:
-    """Render a unified 3-line input box inline on terminal stdout (all 3 lines visible while typing)."""
-    top_str = _get_top_border(mode)
-    bottom_str = _get_bottom_border()
+    """Three-line input box that stays intact when the terminal is resized.
 
+    Top border, input line and bottom border are one prompt_toolkit layout, so
+    the bottom border is visible while typing. On resize the terminal wraps the
+    previous frame before SIGWINCH arrives; we move up by the wrapped row count
+    and erase before redrawing, instead of trusting the logical 3-row height.
+    """
     kb = KeyBindings()
-    buf = Buffer(
-        history=history,
-        completer=completer,
-        complete_while_typing=True,
-    )
+    buf = Buffer(history=history, completer=completer, complete_while_typing=True)
 
     @kb.add("enter")
     def _on_enter(event: Any) -> None:
@@ -130,46 +169,56 @@ def prompt_box(mode: str, history: Any, completer: Any) -> str:
     def _on_eof(event: Any) -> None:
         event.app.exit(exception=EOFError())
 
-    top_w = Window(
-        FormattedTextControl(top_str),
-        height=1,
-        dont_extend_height=True,
-        style="class:border",
-    )
+    top_w = _border_row(lambda: _format_top_left(mode), "╮")
     input_w = Window(
         BufferControl(buffer=buf),
         height=1,
         dont_extend_height=True,
+        wrap_lines=False,
         get_line_prefix=lambda line_number, wrap_count: [
             ("class:border", "│ "),
             ("class:prompt", "> "),
         ],
     )
-    bottom_w = Window(
-        FormattedTextControl(bottom_str),
-        height=1,
-        dont_extend_height=True,
-        style="class:border",
-    )
-
-    main_container = HSplit([top_w, input_w, bottom_w])
-    float_container = FloatContainer(
-        content=main_container,
-        floats=[
-            Float(
-                xcursor=True,
-                ycursor=True,
-                content=CompletionsMenu(max_height=8),
-            )
-        ],
+    bottom_w = _border_row("╰", "╯")
+    layout_root = FloatContainer(
+        content=HSplit([top_w, input_w, bottom_w]),
+        floats=[Float(xcursor=True, ycursor=True, content=CompletionsMenu(max_height=8))],
     )
 
     app: Application[str] = Application(
-        layout=Layout(float_container),
+        layout=Layout(layout_root),
         key_bindings=kb,
         style=REPL_STYLE,
         full_screen=False,
     )
+
+    def _safe_on_resize() -> None:
+        renderer = app.renderer
+        out = renderer.output
+        screen = renderer._last_screen
+        # A resize can land after reset() cleared the previous frame but before
+        # the next paint stored one. Erasing from that unknown cursor stacks a
+        # new banner on the old one, so only move/erase when the frame is known.
+        if screen is not None:
+            rows = _wrapped_rows_above_cursor(
+                screen,
+                out.get_size().columns,
+                renderer._cursor_pos.x,
+                renderer._cursor_pos.y,
+            )
+            out.write_raw("\r")
+            out.cursor_up(rows)
+            out.erase_down()
+            out.reset_attributes()
+            out.flush()
+            renderer._last_screen = None
+            renderer._last_size = None
+            renderer._cursor_pos = type(renderer._cursor_pos)(0, 0)
+        app._request_absolute_cursor_position()
+        app._redraw()
+
+    app._on_resize = _safe_on_resize  # type: ignore[method-assign]
     return app.run()
 
 
@@ -191,15 +240,6 @@ def _get_active_model_name() -> str:
     if provider == "openai":
         return getattr(settings, "default_model", "gpt-4o")
     return "No Provider"
-
-
-def _bottom_toolbar() -> str:
-    border = _get_bottom_border()
-    branch = _get_git_branch()
-    cwd = Path.cwd().name
-    model = _get_active_model_name()
-    status = f" π ☯ {model} · ~/{cwd} · ⎇ {branch} · Ready"
-    return f"{border}\n{status}"
 
 
 class SlashCommandCompleter(Completer):
