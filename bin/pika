@@ -32,7 +32,7 @@ export PYTHONPATH="$REPO_DIR:$PYTHONPATH"
 
 # If no arguments provided, launch TUI dashboard directly
 if [ $# -eq 0 ]; then
-    exec "$PYTHON_BIN" "$REPO_DIR/main.py" tui
+    exec "$PYTHON_BIN" "$REPO_DIR/main.py" repl
 else
     exec "$PYTHON_BIN" "$REPO_DIR/main.py" "$@"
 fi

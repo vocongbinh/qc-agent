@@ -248,6 +248,14 @@ def tui():
     QCTApp().run()
 
 
+@app.command(name="repl")
+def repl_cmd(
+    code: Optional[str] = typer.Option(".", "--code", "-c", help="Đường dẫn source code dự án cần test"),
+):
+    """Mở giao diện dòng lệnh tương tác (Inline REPL - Claude Code / Oh My Pi style)."""
+    from cli.repl import run_repl
+    run_repl(code_path=code or ".")
+
 @app.command()
 def login(
     provider: str = typer.Argument("antigravity", help="Provider cần đăng nhập: 'antigravity'"),

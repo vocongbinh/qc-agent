@@ -81,7 +81,7 @@ def test_run_and_version_are_still_registered():
 
 
 def test_registered_commands_are_expected():
-    assert _command_names() == {"run", "version", "tui", "login", "status", "index"}
+    assert _command_names() == {"run", "version", "tui", "repl", "login", "status", "index"}
 def test_app_help_advertises_the_tui():
     result = runner.invoke(main.app, ["--help"])
     assert result.exit_code == 0
