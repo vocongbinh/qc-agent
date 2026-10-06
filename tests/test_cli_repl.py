@@ -50,3 +50,13 @@ def test_get_git_branch():
     branch = _get_git_branch()
     assert isinstance(branch, str)
     assert len(branch) > 0
+
+
+def test_borders_format():
+    from cli.repl import _get_top_border, _get_bottom_border
+    top = _get_top_border("test")
+    assert top.startswith("╭─ TEST ")
+    assert top.endswith("╮")
+    bottom = _get_bottom_border()
+    assert bottom.startswith("╰")
+    assert bottom.endswith("╯")

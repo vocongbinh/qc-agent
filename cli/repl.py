@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 import uuid
@@ -39,6 +40,7 @@ SLASH_COMMANDS = {
 }
 
 REPL_STYLE = Style.from_dict({
+    "border": "#4b5563",
     "prompt": "bold #38bdf8",
     "completion-menu.completion": "bg:#1e1e2e #cdd6f4",
     "completion-menu.completion.current": "bg:#313244 #ffffff bold",
@@ -46,6 +48,20 @@ REPL_STYLE = Style.from_dict({
     "completion-menu.meta.completion.current": "bg:#313244 #a6adc8",
     "bottom-toolbar": "#a6adc8 bg:#181825",
 })
+
+current_mode = "test"
+
+
+def _get_top_border(mode: str) -> str:
+    cols = shutil.get_terminal_size().columns
+    mode_tag = f" {mode.upper()} "
+    dash_len = max(2, cols - 4 - len(mode_tag))
+    return f"╭─{mode_tag}" + "─" * dash_len + "╮"
+
+
+def _get_bottom_border() -> str:
+    cols = shutil.get_terminal_size().columns
+    return "╰" + "─" * (cols - 2) + "╯"
 
 
 def _get_git_branch() -> str:
@@ -69,10 +85,12 @@ def _get_active_model_name() -> str:
 
 
 def _bottom_toolbar() -> str:
+    border = _get_bottom_border()
     branch = _get_git_branch()
     cwd = Path.cwd().name
     model = _get_active_model_name()
-    return f" π ☯ {model} · ~/{cwd} · ⎇ {branch} · Ready"
+    status = f" π ☯ {model} · ~/{cwd} · ⎇ {branch} · Ready"
+    return f"{border}\n{status}"
 
 
 class SlashCommandCompleter(Completer):
@@ -146,9 +164,10 @@ def _handle_slash_command(cmd: str) -> bool:
             console.print("[dim]Để đổi model, gõ: /model <tên_model>[/dim]")
         return True
 
+    global current_mode
     if action in ("/test", "/debug", "/fix"):
-        console.print(f"[bold cyan]Chế độ:[/bold cyan] {action[1:].upper()}")
-        console.print("[dim]Mô tả yêu cầu để bắt đầu kiểm thử hoặc sửa lỗi.[/dim]")
+        current_mode = action[1:].lower()
+        console.print(f"[bold cyan]Chế độ đã chuyển sang:[/bold cyan] [bold]{current_mode.upper()}[/bold]")
         return True
 
     console.print(f"[yellow]Lệnh không xác định: {action}. Gõ /help để xem trợ giúp.[/yellow]")
@@ -247,12 +266,22 @@ def run_repl(code_path: str = ".") -> None:
         )
     )
 
+    global current_mode
     while True:
         try:
+            top_border = _get_top_border(current_mode)
+            console.print(f"[#4b5563]{top_border}[/#4b5563]")
+
             user_input = session.prompt(
-                "❯ ",
+                [
+                    ("class:border", "│ "),
+                    ("class:prompt", "> "),
+                ],
                 bottom_toolbar=_bottom_toolbar,
             ).strip()
+
+            closing_border = _get_bottom_border()
+            console.print(f"[#4b5563]{closing_border}[/#4b5563]")
 
             if not user_input:
                 continue
