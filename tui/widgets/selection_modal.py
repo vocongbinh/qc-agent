@@ -28,8 +28,8 @@ class SelectionModalScreen(ModalScreen):
     }
 
     #modal_container {
-        width: 80%;
-        max-width: 90;
+        width: 85%;
+        max-width: 100;
         height: auto;
         max-height: 80%;
         background: $background;
@@ -53,6 +53,13 @@ class SelectionModalScreen(ModalScreen):
         max-height: 16;
         margin-bottom: 1;
         background: transparent;
+        scrollbar-size-horizontal: 1;
+        scrollbar-size-vertical: 1;
+        scrollbar-background: transparent;
+        scrollbar-background-active: transparent;
+        scrollbar-background-hover: transparent;
+        scrollbar-color: #38bdf8;
+        scrollbar-gutter: auto;
     }
 
     #modal_table > .datatable--even-row {
@@ -116,7 +123,7 @@ class SelectionModalScreen(ModalScreen):
         self.options = options
         self.on_select = on_select
         self._table: Optional[DataTable] = None
-
+        self._current_row: int = -1
     def compose(self) -> ComposeResult:
         with Vertical(id="modal_container"):
             yield Label(self.title_text, id="modal_title")
@@ -130,22 +137,56 @@ class SelectionModalScreen(ModalScreen):
 
     def on_mount(self) -> None:
         self._table = self.query_one(DataTable)
+        self._current_row = -1
         for i, opt in enumerate(self.options, 1):
             key = str(i)
             name = opt.get("name", "")
             desc = opt.get("desc", "")
             status = opt.get("status", "")
+            is_active = any(k in status for k in ["Active", "Signed In", "Configured", "✔"])
 
-            style_status = "green" if "Active" in status or "Signed In" in status or "Configured" in status or "✔" in status else "dim"
+            # Row 0 starts selected by default cursor
+            is_selected = (i == 1)
+            style_main = "bold" if is_selected else "dim"
+            style_status = ("bold green" if is_active else "bold") if is_selected else ("green" if is_active else "dim")
+
             self._table.add_row(
-                Text(key, style="bold"),
-                Text(name, style="bold"),
-                Text(desc, style="dim"),
+                Text(key, style=style_main),
+                Text(name, style=style_main),
+                Text(desc, style=style_main),
                 Text(status, style=style_status),
                 key=opt.get("id", str(i)),
             )
+        if self.options:
+            self._current_row = 0
         self.set_focus(self._table)
 
+    def _style_row(self, row_idx: int, is_selected: bool) -> None:
+        if self._table is None or not (0 <= row_idx < len(self.options)):
+            return
+        opt = self.options[row_idx]
+        status = opt.get("status", "")
+        is_active = any(k in status for k in ["Active", "Signed In", "Configured", "✔"])
+
+        if is_selected:
+            style_main = "bold"
+            style_status = "bold green" if is_active else "bold"
+        else:
+            style_main = "dim"
+            style_status = "green" if is_active else "dim"
+
+        self._table.update_cell_at((row_idx, 0), Text(str(row_idx + 1), style=style_main))
+        self._table.update_cell_at((row_idx, 1), Text(opt.get("name", ""), style=style_main))
+        self._table.update_cell_at((row_idx, 2), Text(opt.get("desc", ""), style=style_main))
+        self._table.update_cell_at((row_idx, 3), Text(status, style=style_status))
+
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        new_row = event.cursor_row
+        if new_row != self._current_row:
+            if self._current_row != -1:
+                self._style_row(self._current_row, is_selected=False)
+            self._style_row(new_row, is_selected=True)
+            self._current_row = new_row
     def action_dismiss_modal(self) -> None:
         self.dismiss(None)
 
